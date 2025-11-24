@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>GPS Track Viewer</title>
+
+  <!-- Leaflet CSS -->
+ <!-- href="https://unpkg.com/leaflet/dist/leaflet.css" -->
+  <link
+    rel="stylesheet"
+    href="styles.css"
+  />
+
+  <style>
+    /* Make the map fill the whole window */
+    html, body {
+      height: 100%;
+      margin: 0;
+    }
+    #map {
+      width: 100%;
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <script>
+    // Initialize the map
+    const map = L.map('map').setView([37.7749, -122.4194], 5); // center, zoom
+
+    // Add a tile layer (OpenStreetMap)
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    // Fetch our GPS track from the backend
+    fetch('/api/track')
+      .then(response => response.json())
+      .then(data => {
+        // Add GeoJSON layer
+        const layer = L.geoJSON(data).addTo(map);
+        // Zoom to the layer bounds
+        map.fitBounds(layer.getBounds());
+      })
+      .catch(err => {
+        console.error('Error loading track:', err);
+      });
+  </script>
+</body>
+</html>

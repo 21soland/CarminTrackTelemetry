@@ -1,0 +1,1 @@
+Use LiveServer visual studio extension to view the website live.
