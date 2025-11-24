@@ -1,1 +1,1 @@
-Use LiveServer visual studio extension to view the website live.
+Run test.bat to launch the website in the browser.
