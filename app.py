@@ -3,6 +3,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import json
 from pathlib import Path
+import analyze_gps_data
 
 app = FastAPI()
 
@@ -19,6 +20,7 @@ def read_root():
 def load_and_process_gps():
     # EXAMPLE: return dummy GeoJSON
     # Replace this with reading your file + analysis results
+    raw_traj = analyze_gps_data.get_raw_trajectory()
     feature = {
         "type": "Feature",
         "geometry": {
@@ -32,7 +34,7 @@ def load_and_process_gps():
     }
     return {
         "type": "FeatureCollection",
-        "features": [feature],
+        "features": [raw_traj],
     }
 
 processed_geojson = load_and_process_gps()
