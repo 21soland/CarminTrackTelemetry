@@ -1,0 +1,22 @@
+Data
+    -> Check compute_derived_metrics function math for accelerometer data
+    -> Distance is completely wrong
+    -> Lateral and Longitutinal accelerations are wrong
+General
+    -> Associate each dataset with a specific track that has a start/finish coordinate
+    -> Split analyze_gps_data into various files
+Smooth trajectory
+    -> Filter noisy measurements
+Heatmaps
+    -> Speed heatmap scale is wrong should be based on telemetry data (which is accurate)
+Corners
+    -> Adjust tolerance
+UI
+    -> Get rid of the .txt thing below the track selection
+    -> Fix Corner UI boundary overlap. Add scroll (or up/down)
+    -> Add back arrow to change which analysis we're doing
+    -> Only one lap should be visible at a time
+    -> Distance to miles (instead of meters)
+Other (Optional)
+    -> Create logo, add to menu page and map page
+    -> Add the ability to upload your own data

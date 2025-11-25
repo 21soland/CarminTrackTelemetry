@@ -409,8 +409,13 @@
     let selectedDeltaLap = null;
     let cornerGroup = L.layerGroup().addTo(map);
     let heatmapLayers = {};
+    
+    // Get dataset from URL parameter
+    const urlParams = new URLSearchParams(window.location.search);
+    const dataset = urlParams.get('dataset');
+    const datasetParam = dataset ? `?dataset=${encodeURIComponent(dataset)}` : '';
 
-    fetch('/api/session')
+    fetch(`/api/session${datasetParam}`)
       .then(res => res.json())
       .then(session => {
         telemetry = session.telemetry || [];
@@ -809,10 +814,12 @@
       document.getElementById('export-lap-btn').addEventListener('click', () => {
         const lapNumber = lapSelect.value;
         if (!lapNumber) return;
-        window.open(`/api/export/lap/${lapNumber}`, '_blank');
+        const exportUrl = dataset ? `/api/export/lap/${lapNumber}?dataset=${encodeURIComponent(dataset)}` : `/api/export/lap/${lapNumber}`;
+        window.open(exportUrl, '_blank');
       });
       document.getElementById('export-session-btn').addEventListener('click', () => {
-        window.open('/api/export/session', '_blank');
+        const exportUrl = dataset ? `/api/export/session?dataset=${encodeURIComponent(dataset)}` : '/api/export/session';
+        window.open(exportUrl, '_blank');
       });
     }
   </script>
