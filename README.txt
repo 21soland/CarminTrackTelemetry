@@ -1,11 +1,5 @@
-CarminTrack Telemetry
+GarminTrack Telemetry
 =====================
-
-This prototype turns raw Android GNSS + IMU logs into a GARMIN-style lap analysis dashboard:
-
-- Lap-by-lap trajectory rendering on an interactive Leaflet map.
-- Cursor-driven telemetry probing (speed, longitudinal / lateral acceleration, IMU accelerations, distance along track).
-- Automated lap detection and three-sector timing computed directly from the data—no beacons required.
 
 Project Structure
 -----------------
