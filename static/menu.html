@@ -2,116 +2,12 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>CarminTrack - Select Dataset</title>
-  <style>
-    :root {
-      color-scheme: dark;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      --panel-bg: rgba(15, 17, 26, 0.95);
-      --accent: #ff2d55;
-      --muted: #a0a8c0;
-    }
-    html, body {
-      height: 100%;
-      margin: 0;
-      background: linear-gradient(135deg, #05070f 0%, #0f111a 100%);
-      color: white;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .menu-container {
-      background: var(--panel-bg);
-      border-radius: 24px;
-      padding: 3rem;
-      max-width: 600px;
-      width: 90%;
-      backdrop-filter: blur(20px);
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-    }
-    h1 {
-      margin: 0 0 0.5rem;
-      font-size: 2rem;
-      font-weight: 700;
-      background: linear-gradient(135deg, #ff2d55 0%, #ff8a5b 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
-    .subtitle {
-      color: var(--muted);
-      margin-bottom: 2rem;
-      font-size: 0.95rem;
-    }
-    .dataset-list {
-      display: flex;
-      flex-direction: column;
-      gap: 1rem;
-    }
-    .dataset-item {
-      background: rgba(255, 255, 255, 0.05);
-      border: 2px solid rgba(255, 255, 255, 0.1);
-      border-radius: 12px;
-      padding: 1.5rem;
-      cursor: pointer;
-      transition: all 0.3s ease;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .dataset-item:hover {
-      background: rgba(255, 255, 255, 0.08);
-      border-color: var(--accent);
-      transform: translateY(-2px);
-      box-shadow: 0 8px 24px rgba(255, 45, 85, 0.2);
-    }
-    .dataset-item:active {
-      transform: translateY(0);
-    }
-    .dataset-name {
-      font-size: 1.1rem;
-      font-weight: 600;
-      margin-bottom: 0.25rem;
-    }
-    .dataset-filename {
-      font-size: 0.85rem;
-      color: var(--muted);
-    }
-    .dataset-arrow {
-      color: var(--accent);
-      font-size: 1.5rem;
-      opacity: 0.6;
-      transition: opacity 0.3s ease;
-    }
-    .dataset-item:hover .dataset-arrow {
-      opacity: 1;
-    }
-    .loading {
-      text-align: center;
-      color: var(--muted);
-      padding: 2rem;
-    }
-    .error {
-      background: rgba(255, 45, 85, 0.1);
-      border: 2px solid var(--accent);
-      border-radius: 12px;
-      padding: 1rem;
-      color: #ff6b8a;
-      margin-top: 1rem;
-    }
-    .empty-state {
-      text-align: center;
-      padding: 3rem 1rem;
-      color: var(--muted);
-    }
-    .empty-state p {
-      margin: 0.5rem 0;
-    }
-  </style>
+  <title>CarminTrackTelemetry - Select Dataset</title>
+  <link rel="stylesheet" href="/static/menu.css" />
 </head>
 <body>
   <div class="menu-container">
-    <h1>CarminTrack</h1>
+    <h1>CarminTrackTelemetry</h1>
     <p class="subtitle">Select a dataset to analyze</p>
     
     <div id="dataset-list" class="dataset-list">
@@ -145,7 +41,6 @@
           <div class="dataset-item" onclick="selectDataset('${dataset.filename}')">
             <div>
               <div class="dataset-name">${dataset.display_name}</div>
-              <div class="dataset-filename">${dataset.filename}</div>
             </div>
             <div class="dataset-arrow">→</div>
           </div>
