@@ -799,8 +799,8 @@ def build_lap_features(telemetry: List[Dict], laps: List[Dict]) -> Dict:
             
             if prev_point is not None:
                 segments.append([prev_point, point])
-                speed_kmh = (sample.get("speed_mps") or 0) * 3.6
-                segment_colors.append(speed_band_color(speed_kmh))
+                speed_mph = sample.get("speed_mph") or 0.0
+                segment_colors.append(speed_band_color(speed_mph))
             
             prev_point = point
         
@@ -823,32 +823,50 @@ def build_lap_features(telemetry: List[Dict], laps: List[Dict]) -> Dict:
     return {"type": "FeatureCollection", "features": features}
 
 
-def speed_band_color(speed_kmh: float) -> str:
+def speed_band_color(speed_mph: float) -> str:
     """
-    Map speed to a color for visualization.
-    
+    Map speed to a color for visualization, interpolating between bands.
+
     Color bands:
-    - < 30 km/h: Blue
-    - 30-55 km/h: Green
-    - 55-80 km/h: Yellow
-    - 80-110 km/h: Orange
-    - >= 110 km/h: Red
-    
+    - < 20 mph: Blue
+    - 20-35 mph: Green
+    - 35-50 mph: Yellow
+    - 50-70 mph: Orange
+    - >= 70 mph: Red
+
     Args:
-        speed_kmh: Speed in kilometers per hour.
-        
+        speed_mph: Speed in miles per hour.
+
     Returns:
         Hex color code string.
     """
-    if speed_kmh < 30:
-        return "#0088ff"  # blue
-    if speed_kmh < 55:
-        return "#00ff00"  # green
-    if speed_kmh < 80:
-        return "#ffff00"  # yellow
-    if speed_kmh < 110:
-        return "#ff8800"  # orange
-    return "#ff0000"  # red
+    # Define speed band breakpoints and their corresponding RGB values
+    bands = [
+        (0,   (0, 136, 255)),   # Blue (#0088ff)
+        (20,  (0, 255, 0)),     # Green (#00ff00)
+        (35,  (255, 255, 0)),   # Yellow (#ffff00)
+        (50,  (255, 136, 0)),   # Orange (#ff8800)
+        (70,  (255, 0, 0)),     # Red (#ff0000)
+    ]
+
+    # Clamp speed_mph if out of bounds
+    if speed_mph <= bands[0][0]:
+        rgb = bands[0][1]
+    elif speed_mph >= bands[-1][0]:
+        rgb = bands[-1][1]
+    else:
+        # Find the interval it belongs to
+        for i in range(len(bands) - 1):
+            spd0, col0 = bands[i]
+            spd1, col1 = bands[i + 1]
+            if spd0 <= speed_mph < spd1:
+                f = (speed_mph - spd0) / (spd1 - spd0)
+                rgb = tuple(
+                    int(col0[j] + f * (col1[j] - col0[j])) for j in range(3)
+                )
+                break
+
+    return "#{:02x}{:02x}{:02x}".format(*rgb)
 
 
 def build_lap_delta_traces(telemetry: List[Dict], laps: List[Dict]) -> List[Dict]:

@@ -181,6 +181,24 @@
       height: 8px;
       border-radius: 999px;
     }
+    .speed-toggle {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid rgba(255,255,255,0.1);
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .speed-toggle input {
+      transform: scale(1.1);
+      cursor: pointer;
+    }
+    .speed-toggle label {
+      cursor: pointer;
+      user-select: none;
+    }
     #side-panel {
       position: absolute;
       top: 1.5rem;
@@ -294,23 +312,27 @@
     <h2>Speed Legend</h2>
     <div class="legend-row">
       <span class="legend-swatch" style="background:#0088ff"></span>
-      <span>&lt; 30 mph</span>
+      <span>&lt; 20 mph</span>
     </div>
     <div class="legend-row">
       <span class="legend-swatch" style="background:#00ff00"></span>
-      <span>30 – 55 mph</span>
+      <span>20 – 35 mph</span>
     </div>
     <div class="legend-row">
       <span class="legend-swatch" style="background:#ffff00"></span>
-      <span>55 – 80 mph</span>
+      <span>35 – 50 mph</span>
     </div>
     <div class="legend-row">
       <span class="legend-swatch" style="background:#ff8800"></span>
-      <span>80 – 110 mph</span>
+      <span>50 – 70 mph</span>
     </div>
     <div class="legend-row">
       <span class="legend-swatch" style="background:#ff0000"></span>
-      <span>&gt; 110 mph</span>
+      <span>&gt; 70 mph</span>
+    </div>
+    <div class="speed-toggle">
+      <input type="checkbox" id="speed-coloring-toggle" checked />
+      <label for="speed-coloring-toggle">Show Speed Colormap</label>
     </div>
   </div>
   <div id="side-panel">
@@ -409,6 +431,8 @@
     let selectedDeltaLap = null;
     let cornerGroup = L.layerGroup().addTo(map);
     let heatmapLayers = {};
+    let speedColoringEnabled = true;
+    let lapFeaturesData = null;
     
     // Get dataset from URL parameter
     const urlParams = new URLSearchParams(window.location.search);
@@ -419,6 +443,7 @@
       .then(res => res.json())
       .then(session => {
         telemetry = session.telemetry || [];
+        lapFeaturesData = session.lap_features;
         drawTrack(session.track);
         renderLapLanes(session.lap_features);
         renderLapControls(session.lap_features);
@@ -427,6 +452,7 @@
         renderCornerList(session.corners || []);
         setupHeatmapControls(session.heatmap || {});
         setupExportControls(session.laps || []);
+        setupSpeedColoringToggle();
         configurePanelToggle();
         initCursor();
         document.getElementById('status').textContent = telemetry.length
@@ -489,6 +515,21 @@
 
     function renderLapLanes(lapCollection) {
       if (!lapCollection || !lapCollection.features) return;
+      
+      // Store visibility state before clearing
+      const visibilityState = new Map();
+      lapLayers.forEach((entry, lapNum) => {
+        visibilityState.set(lapNum, map.hasLayer(entry.layer));
+      });
+      
+      // Clear existing lap layers
+      lapLayers.forEach((entry) => {
+        if (map.hasLayer(entry.layer)) {
+          map.removeLayer(entry.layer);
+        }
+      });
+      lapLayers.clear();
+      
       lapCollection.features.forEach((feature, idx) => {
         const lapNumber = feature.properties?.lap_number ?? idx + 1;
         const baseColor = feature.properties?.stroke || lapColor(idx);
@@ -497,7 +538,8 @@
         const segmentColors = feature.properties?.segment_colors || [];
 
         let layer;
-        if (segments.length) {
+        if (segments.length && speedColoringEnabled) {
+          // Use speed-colored segments
           const polylines = segments.map((segment, segIdx) => {
             const color = segmentColors[segIdx] || baseColor;
             const latlngs = segment.map(([lon, lat]) => [lat, lon]);
@@ -509,15 +551,17 @@
             line.on('mousemove', event => updateTelemetryAt(event.latlng));
             return line;
           });
-          layer = L.layerGroup(polylines).addTo(map);
+          layer = L.layerGroup(polylines);
         } else {
+          // Use black color when speed coloring is disabled, or if no segments
+          const color = speedColoringEnabled ? baseColor : '#93d5db';
           layer = L.geoJSON(feature, {
             style: {
-              color: baseColor,
+              color: color,
               weight: strokeWidth,
               opacity: 0.95,
             },
-          }).addTo(map);
+          });
 
           layer.eachLayer(child => {
             if (child instanceof L.Polyline) {
@@ -525,8 +569,26 @@
             }
           });
         }
+        
+        // Restore visibility state
+        const wasVisible = visibilityState.get(lapNumber) !== false; // Default to true for new laps
+        if (wasVisible) {
+          layer.addTo(map);
+        }
 
         lapLayers.set(lapNumber, { layer, color: baseColor });
+      });
+    }
+    
+    function setupSpeedColoringToggle() {
+      const toggle = document.getElementById('speed-coloring-toggle');
+      if (!toggle) return;
+      
+      toggle.addEventListener('change', (event) => {
+        speedColoringEnabled = event.target.checked;
+        if (lapFeaturesData) {
+          renderLapLanes(lapFeaturesData);
+        }
       });
     }
 

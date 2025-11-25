@@ -10,13 +10,14 @@ Smooth trajectory
 Heatmaps
     -> Speed heatmap scale is wrong should be based on telemetry data (which is accurate)
 Corners
-    -> Adjust tolerance
+    -> Adjust tolerance (fixing the accel data should fix this)
 UI
     -> Get rid of the .txt thing below the track selection
     -> Fix Corner UI boundary overlap. Add scroll (or up/down)
     -> Add back arrow to change which analysis we're doing
     -> Only one lap should be visible at a time
     -> Distance to miles (instead of meters)
+    -> Map zoom in the corner looks shitty
 Other (Optional)
     -> Create logo, add to menu page and map page
     -> Add the ability to upload your own data
