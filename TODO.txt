@@ -12,7 +12,6 @@ Heatmaps
 Corners
     -> Adjust tolerance (fixing the accel data should fix this)
 UI
-    -> Get rid of the .txt thing below the track selection
     -> Fix Corner UI boundary overlap. Add scroll (or up/down)
     -> Add back arrow to change which analysis we're doing
     -> Only one lap should be visible at a time
