@@ -2,55 +2,819 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>GPS Track Viewer</title>
-
-  <!-- Leaflet CSS -->
- <!-- href="https://unpkg.com/leaflet/dist/leaflet.css" -->
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet/dist/leaflet.css"
-  />
-
+  <title>CarminTrack Telemetry</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
-    /* Make the map fill the whole window */
+    :root {
+      color-scheme: dark;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --panel-bg: rgba(15, 17, 26, 0.78);
+      --accent: #ff2d55;
+      --muted: #a0a8c0;
+    }
     html, body {
       height: 100%;
       margin: 0;
+      background: #05070f;
+      color: white;
     }
     #map {
       width: 100%;
       height: 100%;
     }
+    #hud {
+      position: absolute;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      width: 320px;
+      background: var(--panel-bg);
+      border-radius: 16px;
+      padding: 1.25rem;
+      backdrop-filter: blur(18px);
+      box-shadow: 0 20px 45px rgba(0,0,0,0.45);
+      z-index: 1200;
+      pointer-events: auto;
+    }
+    #hud h1 {
+      margin: 0 0 0.5rem;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    #hud small {
+      display: block;
+      color: var(--muted);
+      margin-bottom: 1rem;
+    }
+    .telemetry-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.75rem 1.25rem;
+    }
+    .telemetry-item span.label {
+      display: block;
+      color: var(--muted);
+      font-size: 0.75rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-bottom: 0.25rem;
+    }
+    .telemetry-item span.value {
+      font-size: 1.35rem;
+      font-weight: 600;
+    }
+    #lap-list {
+      margin-top: 1.5rem;
+    }
+    .lap-entry {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.5rem 0;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      font-size: 0.95rem;
+    }
+    .lap-entry:first-of-type {
+      border-top: none;
+      padding-top: 0;
+    }
+    .lap-entry span {
+      color: var(--muted);
+    }
+    .lap-entry strong {
+      color: white;
+      font-weight: 600;
+    }
+    .lap-block + .lap-block {
+      margin-top: 0.5rem;
+    }
+    .sector-row {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 0.25rem;
+    }
+    #status {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-top: 0.5rem;
+    }
+    #lap-controls {
+      position: absolute;
+      top: 1.5rem;
+      left: 1.5rem;
+      width: 240px;
+      background: var(--panel-bg);
+      border-radius: 16px;
+      padding: 1.25rem;
+      backdrop-filter: blur(18px);
+      box-shadow: 0 20px 45px rgba(0,0,0,0.45);
+      z-index: 1200;
+      pointer-events: auto;
+    }
+    #speed-legend {
+      position: absolute;
+      left: 1.5rem;
+      bottom: 1.5rem;
+      width: 240px;
+      background: var(--panel-bg);
+      border-radius: 16px;
+      padding: 1rem;
+      backdrop-filter: blur(18px);
+      box-shadow: 0 20px 45px rgba(0,0,0,0.45);
+      z-index: 1200;
+      pointer-events: auto;
+    }
+    #speed-legend h2 {
+      margin: 0 0 0.75rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    #lap-controls h2 {
+      margin: 0 0 0.75rem;
+      font-size: 1rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    #lap-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .lap-toggle {
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 999px;
+      padding: 0.35rem 0.85rem;
+      background: transparent;
+      color: white;
+      font-size: 0.9rem;
+      text-align: left;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      cursor: pointer;
+      transition: background 0.2s, border 0.2s;
+    }
+    .lap-toggle.active {
+      border-color: currentColor;
+      background: rgba(255,255,255,0.08);
+    }
+    .lap-swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+    }
+    .legend-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 0.4rem;
+      font-size: 0.85rem;
+    }
+    .legend-row:last-child {
+      margin-bottom: 0;
+    }
+    .legend-swatch {
+      width: 20px;
+      height: 8px;
+      border-radius: 999px;
+    }
+    #side-panel {
+      position: absolute;
+      top: 1.5rem;
+      right: 1.5rem;
+      width: 320px;
+      z-index: 1300;
+    }
+    #panel-toggle {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    #panel-toggle button {
+      flex: 1 1 auto;
+      border: 1px solid rgba(255,255,255,0.25);
+      background: rgba(5, 7, 15, 0.6);
+      color: white;
+      padding: 0.4rem 0.65rem;
+      border-radius: 999px;
+      cursor: pointer;
+      font-size: 0.8rem;
+    }
+    #panel-toggle button.active {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+    #panel-views {
+      margin-top: 0.75rem;
+      background: var(--panel-bg);
+      border-radius: 16px;
+      padding: 1rem;
+      backdrop-filter: blur(18px);
+      box-shadow: 0 20px 45px rgba(0,0,0,0.45);
+    }
+    .panel-view {
+      display: none;
+    }
+    .panel-view.active {
+      display: block;
+    }
+    .panel-view h2 {
+      margin: 0 0 0.75rem;
+      font-size: 1rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    #delta-readout {
+      font-size: 2rem;
+      font-weight: 600;
+      margin: 0.5rem 0 0;
+    }
+    #delta-select,
+    #export-lap-select {
+      width: 100%;
+      padding: 0.35rem 0.5rem;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(0,0,0,0.2);
+      color: white;
+      margin-bottom: 0.75rem;
+    }
+    .corner-entry {
+      padding: 0.5rem 0;
+      border-top: 1px solid rgba(255,255,255,0.1);
+      cursor: pointer;
+    }
+    .corner-entry:first-of-type {
+      border-top: none;
+    }
+    .corner-entry span {
+      display: block;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    .corner-entry strong {
+      font-size: 0.95rem;
+      color: white;
+    }
+    .heatmap-option {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.35rem;
+      font-size: 0.9rem;
+    }
+    .heatmap-option input {
+      transform: scale(1.1);
+    }
+    #export-panel button {
+      width: 100%;
+      margin-top: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      border: none;
+      border-radius: 999px;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
   <div id="map"></div>
+  <div id="lap-controls">
+    <h2>Laps</h2>
+    <div id="lap-buttons"></div>
+  </div>
+  <div id="speed-legend">
+    <h2>Speed Legend</h2>
+    <div class="legend-row">
+      <span class="legend-swatch" style="background:#0088ff"></span>
+      <span>&lt; 30 mph</span>
+    </div>
+    <div class="legend-row">
+      <span class="legend-swatch" style="background:#00ff00"></span>
+      <span>30 – 55 mph</span>
+    </div>
+    <div class="legend-row">
+      <span class="legend-swatch" style="background:#ffff00"></span>
+      <span>55 – 80 mph</span>
+    </div>
+    <div class="legend-row">
+      <span class="legend-swatch" style="background:#ff8800"></span>
+      <span>80 – 110 mph</span>
+    </div>
+    <div class="legend-row">
+      <span class="legend-swatch" style="background:#ff0000"></span>
+      <span>&gt; 110 mph</span>
+    </div>
+  </div>
+  <div id="side-panel">
+    <div id="panel-toggle">
+      <button data-panel="delta-panel" class="active">Lap Delta</button>
+      <button data-panel="corner-panel">Corners</button>
+      <button data-panel="heatmap-panel">Heatmaps</button>
+      <button data-panel="export-panel">Export</button>
+    </div>
+    <div id="panel-views">
+      <div id="delta-panel" class="panel-view active">
+        <h2>Lap Delta</h2>
+        <select id="delta-select"></select>
+        <div id="delta-readout">Δ 0.00 s</div>
+        <small id="delta-reference"></small>
+      </div>
+      <div id="corner-panel" class="panel-view">
+        <h2>Corners</h2>
+        <div id="corner-list"></div>
+      </div>
+      <div id="heatmap-panel" class="panel-view">
+        <h2>Heatmaps</h2>
+        <label class="heatmap-option">
+          <input type="checkbox" data-layer="brake" />
+          Braking intensity
+        </label>
+        <label class="heatmap-option">
+          <input type="checkbox" data-layer="throttle" />
+          Throttle zones
+        </label>
+        <label class="heatmap-option">
+          <input type="checkbox" data-layer="lateral" />
+          Lateral load
+        </label>
+      </div>
+      <div id="export-panel" class="panel-view">
+        <h2>Export</h2>
+        <select id="export-lap-select"></select>
+        <button id="export-lap-btn">Download Lap CSV</button>
+        <button id="export-session-btn">Download Session JSON</button>
+      </div>
+    </div>
+  </div>
+  <div id="hud">
+    <h1>Telemetry Cursor</h1>
+    <small>Hover the trajectory to probe GNSS + IMU samples</small>
+    <div class="telemetry-grid">
+      <div class="telemetry-item">
+        <span class="label">Time (s)</span>
+        <span class="value" id="telemetry-time">--</span>
+      </div>
+      <div class="telemetry-item">
+        <span class="label">Speed (mph)</span>
+        <span class="value" id="telemetry-speed">--</span>
+      </div>
+      <div class="telemetry-item">
+        <span class="label">Long accel (m/s²)</span>
+        <span class="value" id="telemetry-long">--</span>
+      </div>
+      <div class="telemetry-item">
+        <span class="label">Lat accel (m/s²)</span>
+        <span class="value" id="telemetry-lat">--</span>
+      </div>
+      <div class="telemetry-item">
+        <span class="label">IMU | ax / ay / az</span>
+        <span class="value" id="telemetry-imu">--</span>
+      </div>
+      <div class="telemetry-item">
+        <span class="label">Distance (m)</span>
+        <span class="value" id="telemetry-distance">--</span>
+      </div>
+    </div>
+    <div id="status">Loading session…</div>
+    <div id="lap-list"></div>
+  </div>
 
-  <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-
   <script>
-    // Initialize the map
-    const map = L.map('map').setView([37.7749, -122.4194], 5); // center, zoom
+    const map = L.map('map', {
+      zoomControl: false
+    }).setView([37.5, -122.3], 14);
 
-    // Add a tile layer (OpenStreetMap)
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
-    // Fetch our GPS track from the backend
-    fetch('/api/track')
-      .then(response => response.json())
-      .then(data => {
-        // Add GeoJSON layer
-        const layer = L.geoJSON(data).addTo(map);
-        // Zoom to the layer bounds
-        map.fitBounds(layer.getBounds());
+    const zoom = L.control.zoom({ position: 'topright' });
+    zoom.addTo(map);
+
+    let telemetry = [];
+    let cursorMarker = null;
+    let lapLayers = new Map();
+    let lapDeltas = [];
+    let deltaLookup = new Map();
+    let selectedDeltaLap = null;
+    let cornerGroup = L.layerGroup().addTo(map);
+    let heatmapLayers = {};
+
+    fetch('/api/session')
+      .then(res => res.json())
+      .then(session => {
+        telemetry = session.telemetry || [];
+        drawTrack(session.track);
+        renderLapLanes(session.lap_features);
+        renderLapControls(session.lap_features);
+        renderLapList(session.laps || []);
+        setupLapDelta(session.lap_deltas || []);
+        renderCornerList(session.corners || []);
+        setupHeatmapControls(session.heatmap || {});
+        setupExportControls(session.laps || []);
+        configurePanelToggle();
+        initCursor();
+        document.getElementById('status').textContent = telemetry.length
+          ? 'Hover over the polyline to inspect telemetry.'
+          : 'No telemetry samples were generated.';
       })
       .catch(err => {
-        console.error('Error loading track:', err);
+        console.error('Error loading session', err);
+        document.getElementById('status').textContent = 'Failed to load session payload.';
       });
+
+    function drawTrack(trackGeoJson) {
+      if (!trackGeoJson) return;
+      const layer = L.geoJSON(trackGeoJson, {
+        style: feature => ({
+          color: feature.properties && feature.properties.marker === 'start_finish'
+            ? 'transparent'
+            : '#9aa7c2',
+          weight: feature.properties && feature.properties.marker === 'start_finish' ? 0 : 2,
+          opacity: 0.5,
+        }),
+        pointToLayer: (feature, latlng) => {
+          if (feature.properties && feature.properties.marker === 'start_finish') {
+            return L.circleMarker(latlng, {
+              radius: 6,
+              color: '#ffb347',
+              fillColor: '#ffb347',
+              fillOpacity: 1
+            }).bindTooltip('Start / Finish', { permanent: false });
+          }
+          return L.marker(latlng);
+        }
+      }).addTo(map);
+
+      map.fitBounds(layer.getBounds(), { padding: [40, 40] });
+      layer.eachLayer(child => {
+        if (child instanceof L.Polyline) {
+          child.on('mousemove', event => updateTelemetryAt(event.latlng));
+        }
+      });
+    }
+
+    function configurePanelToggle() {
+      const buttons = document.querySelectorAll('#panel-toggle button');
+      const panels = document.querySelectorAll('.panel-view');
+      buttons.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const panelId = btn.dataset.panel;
+          buttons.forEach(b => b.classList.remove('active'));
+          panels.forEach(p => p.classList.remove('active'));
+          btn.classList.add('active');
+          document.getElementById(panelId).classList.add('active');
+        });
+      });
+      if (buttons.length) {
+        buttons[0].classList.add('active');
+        document.getElementById(buttons[0].dataset.panel).classList.add('active');
+      }
+    }
+
+    function renderLapLanes(lapCollection) {
+      if (!lapCollection || !lapCollection.features) return;
+      lapCollection.features.forEach((feature, idx) => {
+        const lapNumber = feature.properties?.lap_number ?? idx + 1;
+        const baseColor = feature.properties?.stroke || lapColor(idx);
+        const strokeWidth = feature.properties?.stroke_width || 4;
+        const segments = feature.properties?.segments || [];
+        const segmentColors = feature.properties?.segment_colors || [];
+
+        let layer;
+        if (segments.length) {
+          const polylines = segments.map((segment, segIdx) => {
+            const color = segmentColors[segIdx] || baseColor;
+            const latlngs = segment.map(([lon, lat]) => [lat, lon]);
+            const line = L.polyline(latlngs, {
+              color,
+              weight: strokeWidth,
+              opacity: 0.95,
+            });
+            line.on('mousemove', event => updateTelemetryAt(event.latlng));
+            return line;
+          });
+          layer = L.layerGroup(polylines).addTo(map);
+        } else {
+          layer = L.geoJSON(feature, {
+            style: {
+              color: baseColor,
+              weight: strokeWidth,
+              opacity: 0.95,
+            },
+          }).addTo(map);
+
+          layer.eachLayer(child => {
+            if (child instanceof L.Polyline) {
+              child.on('mousemove', event => updateTelemetryAt(event.latlng));
+            }
+          });
+        }
+
+        lapLayers.set(lapNumber, { layer, color: baseColor });
+      });
+    }
+
+    function lapColor(idx) {
+      const palette = ['#ff2d55', '#28a2ff', '#ffd60a', '#8af27f', '#b28dff', '#ff8a5b'];
+      return palette[idx % palette.length];
+    }
+
+    function initCursor() {
+      cursorMarker = L.circleMarker([0, 0], {
+        radius: 5,
+        color: '#ff2d55',
+        fillColor: '#ff2d55',
+        weight: 2,
+        fillOpacity: 0.9,
+      }).addTo(map);
+      cursorMarker.setStyle({ opacity: 0, fillOpacity: 0 });
+    }
+
+    function updateTelemetryAt(latlng) {
+      if (!telemetry.length || !cursorMarker) return;
+      const sample = findNearestSample(latlng.lat, latlng.lng);
+      if (!sample) return;
+
+      cursorMarker.setLatLng([sample.lat, sample.lon]);
+      cursorMarker.setStyle({ opacity: 1, fillOpacity: 0.9 });
+
+      document.getElementById('telemetry-time').textContent = formatNumber(sample.elapsed_s, 2);
+      document.getElementById('telemetry-speed').textContent = formatNumber(sample.speed_mph, 1);
+      document.getElementById('telemetry-long').textContent = formatNumber(sample.long_accel_mps2, 2);
+      document.getElementById('telemetry-lat').textContent = formatNumber(sample.lat_accel_mps2, 2);
+      document.getElementById('telemetry-distance').textContent = formatNumber(sample.distance_m, 1);
+      const imu = [sample.imu_accel_x, sample.imu_accel_y, sample.imu_accel_z]
+        .map(v => formatNumber(v, 1))
+        .join(' / ');
+      document.getElementById('telemetry-imu').textContent = imu;
+      updateDeltaReadout(sample);
+    }
+
+    function findNearestSample(lat, lon) {
+      let minDist = Infinity;
+      let nearest = null;
+      for (const sample of telemetry) {
+        if (sample.lat == null || sample.lon == null) continue;
+        const dist = haversine(lat, lon, sample.lat, sample.lon);
+        if (dist < minDist) {
+          minDist = dist;
+          nearest = sample;
+        }
+      }
+      return nearest;
+    }
+
+    function haversine(lat1, lon1, lat2, lon2) {
+      const toRad = deg => deg * Math.PI / 180;
+      const R = 6371000;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
+
+    function formatNumber(value, digits = 2) {
+      if (value === null || value === undefined || Number.isNaN(value)) {
+        return '--';
+      }
+      return Number(value).toFixed(digits);
+    }
+
+    function renderLapList(laps) {
+      const container = document.getElementById('lap-list');
+      if (!laps.length) {
+        container.innerHTML = '<p>No laps detected yet.</p>';
+        return;
+      }
+
+      container.innerHTML = laps.map(lap => {
+        const sectors = (lap.sector_times_s || [])
+          .map((time, idx) => `S${idx + 1}: ${formatNumber(time, 2)}s`)
+          .join(' · ');
+        return `
+          <div class="lap-block">
+            <div class="lap-entry">
+              <strong>Lap ${lap.lap_number}</strong>
+              <span>${formatNumber(lap.lap_time_s, 2)} s</span>
+            </div>
+            <div class="sector-row">${sectors}</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderLapControls(lapCollection) {
+      const container = document.getElementById('lap-buttons');
+      container.innerHTML = '';
+      if (!lapCollection || !lapCollection.features || !lapCollection.features.length) {
+        container.innerHTML = '<p>No lap overlays detected.</p>';
+        return;
+      }
+
+      lapCollection.features.forEach((feature, idx) => {
+        const lapNumber = feature.properties?.lap_number ?? idx + 1;
+        const lapTime = feature.properties?.lap_time_s;
+        const color = lapLayers.get(lapNumber)?.color || lapColor(idx);
+
+        const button = document.createElement('button');
+        button.className = 'lap-toggle active';
+        button.dataset.lap = lapNumber;
+        button.innerHTML = `
+          <span class="lap-swatch" style="background:${color}"></span>
+          Lap ${lapNumber}${lapTime ? ` – ${formatNumber(lapTime, 2)}s` : ''}
+        `;
+        button.addEventListener('click', () => toggleLapVisibility(lapNumber, button));
+        container.appendChild(button);
+      });
+    }
+
+    function toggleLapVisibility(lapNumber, button) {
+      const entry = lapLayers.get(lapNumber);
+      if (!entry) return;
+      if (map.hasLayer(entry.layer)) {
+        map.removeLayer(entry.layer);
+        button.classList.remove('active');
+      } else {
+        entry.layer.addTo(map);
+        button.classList.add('active');
+      }
+    }
+
+    function setupLapDelta(deltas) {
+      lapDeltas = deltas || [];
+      deltaLookup.clear();
+      const select = document.getElementById('delta-select');
+      select.innerHTML = '';
+      if (!lapDeltas.length) {
+        select.innerHTML = '<option value="">Not enough laps</option>';
+        selectedDeltaLap = null;
+        document.getElementById('delta-readout').textContent = 'Δ --';
+        document.getElementById('delta-reference').textContent = '';
+        return;
+      }
+      lapDeltas.forEach(delta => {
+        deltaLookup.set(delta.lap_number, delta.trace);
+      });
+      selectedDeltaLap = lapDeltas[0].lap_number;
+      lapDeltas.forEach(delta => {
+        const option = document.createElement('option');
+        option.value = delta.lap_number;
+        option.textContent = `Lap ${delta.lap_number} vs Lap ${delta.reference_lap}`;
+        if (delta.lap_number === selectedDeltaLap) option.selected = true;
+        select.appendChild(option);
+      });
+      document.getElementById('delta-reference').textContent =
+        `Reference lap: ${lapDeltas[0].reference_lap} (${formatNumber(lapDeltas[0].reference_time_s, 2)}s)`;
+      select.addEventListener('change', event => {
+        selectedDeltaLap = Number(event.target.value) || null;
+        document.getElementById('delta-readout').textContent = 'Δ 0.00 s';
+      });
+    }
+
+    function updateDeltaReadout(sample) {
+      if (!selectedDeltaLap || !deltaLookup.has(selectedDeltaLap)) {
+        document.getElementById('delta-readout').textContent = 'Δ --';
+        return;
+      }
+      const lapDistance = sample.lap_distance_m;
+      if (lapDistance == null) {
+        document.getElementById('delta-readout').textContent = 'Δ --';
+        return;
+      }
+      const trace = deltaLookup.get(selectedDeltaLap);
+      const delta = lookupDelta(trace, lapDistance);
+      const formatted = delta > 0 ? `+${formatNumber(delta, 2)}` : formatNumber(delta, 2);
+      document.getElementById('delta-readout').textContent = `Δ ${formatted} s`;
+    }
+
+    function lookupDelta(trace, distance) {
+      if (!trace.length) return 0;
+      for (let i = 1; i < trace.length; i++) {
+        if (distance <= trace[i].distance_m) {
+          const prev = trace[i - 1];
+          const curr = trace[i];
+          const ratio = (distance - prev.distance_m) / Math.max(curr.distance_m - prev.distance_m, 1e-6);
+          return prev.time_delta_s + ratio * (curr.time_delta_s - prev.time_delta_s);
+        }
+      }
+      return trace[trace.length - 1].time_delta_s;
+    }
+
+    function renderCornerList(corners) {
+      const container = document.getElementById('corner-list');
+      container.innerHTML = '';
+      cornerGroup.clearLayers();
+      if (!corners.length) {
+        container.innerHTML = '<p>No corners detected yet.</p>';
+        return;
+      }
+      corners.forEach(corner => {
+        const entry = document.createElement('div');
+        entry.className = 'corner-entry';
+        entry.innerHTML = `
+          <strong>Corner ${corner.corner_id} · Lap ${corner.lap_number}</strong>
+          <span>${formatNumber(corner.min_speed_mph, 1)} mph min · ${formatNumber(corner.max_lat_g, 2)} g</span>
+        `;
+        entry.addEventListener('click', () => highlightCorner(corner));
+        container.appendChild(entry);
+      });
+    }
+
+    function highlightCorner(corner) {
+      cornerGroup.clearLayers();
+      const geometry = corner.geometry || [];
+      if (!geometry.length) return;
+      const latlngs = geometry.map(([lon, lat]) => [lat, lon]);
+      const polyline = L.polyline(latlngs, {
+        color: '#ffffff',
+        weight: 5,
+        dashArray: '8 6',
+      }).addTo(cornerGroup);
+      const apex = corner.apex;
+      if (apex && apex.lat != null && apex.lon != null) {
+        L.circleMarker([apex.lat, apex.lon], {
+          radius: 6,
+          color: '#ffd60a',
+          fillColor: '#ffd60a',
+          fillOpacity: 1,
+        }).addTo(cornerGroup);
+      }
+      map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
+    }
+
+    function setupHeatmapControls(heatmap) {
+      const checkboxes = document.querySelectorAll('#heatmap-panel input[type="checkbox"]');
+      checkboxes.forEach(box => {
+        box.checked = false;
+        box.addEventListener('change', event => {
+          const layerName = event.target.dataset.layer;
+          toggleHeatmap(layerName, event.target.checked, heatmap[layerName] || []);
+        });
+      });
+    }
+
+    function toggleHeatmap(name, enabled, points) {
+      if (heatmapLayers[name]) {
+        map.removeLayer(heatmapLayers[name]);
+        delete heatmapLayers[name];
+      }
+      if (!enabled || !points.length) return;
+      const colorMap = {
+        brake: '#ff2d55',
+        throttle: '#00ffa3',
+        lateral: '#ffd60a',
+      };
+      const markers = points.map(point =>
+        L.circleMarker([point.lat, point.lon], {
+          radius: 4 + 8 * point.intensity,
+          color: colorMap[name] || '#ffffff',
+          fillColor: colorMap[name] || '#ffffff',
+          fillOpacity: 0.35 + 0.5 * point.intensity,
+          weight: 0,
+        })
+      );
+      const layer = L.layerGroup(markers).addTo(map);
+      heatmapLayers[name] = layer;
+    }
+
+    function setupExportControls(laps) {
+      const lapSelect = document.getElementById('export-lap-select');
+      lapSelect.innerHTML = '';
+      laps.forEach(lap => {
+        const option = document.createElement('option');
+        option.value = lap.lap_number;
+        option.textContent = `Lap ${lap.lap_number} (${formatNumber(lap.lap_time_s, 1)} s)`;
+        lapSelect.appendChild(option);
+      });
+      if (!laps.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'No laps available';
+        lapSelect.appendChild(option);
+      }
+
+      document.getElementById('export-lap-btn').addEventListener('click', () => {
+        const lapNumber = lapSelect.value;
+        if (!lapNumber) return;
+        window.open(`/api/export/lap/${lapNumber}`, '_blank');
+      });
+      document.getElementById('export-session-btn').addEventListener('click', () => {
+        window.open('/api/export/session', '_blank');
+      });
+    }
   </script>
 </body>
 </html>
