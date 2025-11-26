@@ -6,17 +6,16 @@ General
     -> Associate each dataset with a specific track that has a start/finish coordinate
     -> Split analyze_gps_data into various files
 Smooth trajectory
-    -> Filter noisy measurements
+    -> Filter noisy measurements. Could probabaly cheat here and use some smoothing function. Kalman filter would be overkill.
 Heatmaps
     -> Speed heatmap scale is wrong should be based on telemetry data (which is accurate)
 Corners
     -> Adjust tolerance (fixing the accel data should fix this)
 UI
-    -> Fix Corner UI boundary overlap. Add scroll (or up/down)
+    -> Fix Corners UI boundary overlap. Add scroll (or up/down)
     -> Add back arrow to change which analysis we're doing
-    -> Only one lap should be visible at a time
     -> Distance to miles (instead of meters)
-    -> Map zoom in the corner looks shitty
+    -> Lap delta fails after you play with it
 Other (Optional)
     -> Create logo, add to menu page and map page
     -> Add the ability to upload your own data

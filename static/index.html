@@ -105,7 +105,7 @@
         <span class="value" id="telemetry-imu">--</span>
       </div>
       <div class="telemetry-item">
-        <span class="label">Distance (m)</span>
+        <span class="label">Distance (mi)</span>
         <span class="value" id="telemetry-distance">--</span>
       </div>
     </div>
@@ -124,11 +124,9 @@
       attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
-    const zoom = L.control.zoom({ position: 'topright' });
-    zoom.addTo(map);
-
     let telemetry = [];
     let cursorMarker = null;
+    let startFinishMarker = null;
     let lapLayers = new Map();
     let lapDeltas = [];
     let deltaLookup = new Map();
@@ -149,6 +147,7 @@
         telemetry = session.telemetry || [];
         lapFeaturesData = session.lap_features;
         drawTrack(session.track);
+        renderPartialLaps(session.partial_lap_features);
         renderLapLanes(session.lap_features);
         renderLapControls(session.lap_features);
         renderLapList(session.laps || []);
@@ -180,12 +179,16 @@
         }),
         pointToLayer: (feature, latlng) => {
           if (feature.properties && feature.properties.marker === 'start_finish') {
-            return L.circleMarker(latlng, {
+            startFinishMarker = L.circleMarker(latlng, {
               radius: 6,
-              color: '#ffb347',
-              fillColor: '#ffb347',
+              color: '#000000',
+              fillColor: '#000000',
               fillOpacity: 1
             }).bindTooltip('Start / Finish', { permanent: false });
+            // Bring to front to ensure it's on top
+            startFinishMarker.addTo(map);
+            startFinishMarker.bringToFront();
+            return startFinishMarker;
           }
           return L.marker(latlng);
         }
@@ -197,6 +200,11 @@
           child.on('mousemove', event => updateTelemetryAt(event.latlng));
         }
       });
+      
+      // Ensure start/finish marker is on top
+      if (startFinishMarker) {
+        startFinishMarker.bringToFront();
+      }
     }
 
     function configurePanelToggle() {
@@ -214,6 +222,33 @@
       if (buttons.length) {
         buttons[0].classList.add('active');
         document.getElementById(buttons[0].dataset.panel).classList.add('active');
+      }
+    }
+
+    function renderPartialLaps(partialLapCollection) {
+      if (!partialLapCollection || !partialLapCollection.features) return;
+      
+      partialLapCollection.features.forEach((feature) => {
+        const coords = feature.geometry.coordinates;
+        if (!coords || coords.length < 2) return;
+        
+        const latlngs = coords.map(([lon, lat]) => [lat, lon]);
+        const polyline = L.polyline(latlngs, {
+          color: '#555555',  // Dark gray
+          weight: 3,
+          opacity: 0.7,
+          interactive: false,  // Non-interactive
+        });
+        
+        polyline.addTo(map);
+      });
+      
+      // Ensure start/finish marker and cursor stay on top
+      if (startFinishMarker) {
+        startFinishMarker.bringToFront();
+      }
+      if (cursorMarker) {
+        cursorMarker.bringToFront();
       }
     }
 
@@ -282,6 +317,14 @@
 
         lapLayers.set(lapNumber, { layer, color: baseColor });
       });
+      
+      // Ensure start/finish marker and cursor stay on top
+      if (startFinishMarker) {
+        startFinishMarker.bringToFront();
+      }
+      if (cursorMarker) {
+        cursorMarker.bringToFront();
+      }
     }
     
     function setupSpeedColoringToggle() {
@@ -310,6 +353,8 @@
         fillOpacity: 0.9,
       }).addTo(map);
       cursorMarker.setStyle({ opacity: 0, fillOpacity: 0 });
+      // Bring cursor to front to ensure it's always on top
+      cursorMarker.bringToFront();
     }
 
     function updateTelemetryAt(latlng) {
@@ -319,12 +364,16 @@
 
       cursorMarker.setLatLng([sample.lat, sample.lon]);
       cursorMarker.setStyle({ opacity: 1, fillOpacity: 0.9 });
+      // Ensure cursor stays on top
+      cursorMarker.bringToFront();
 
       document.getElementById('telemetry-time').textContent = formatNumber(sample.elapsed_s, 2);
       document.getElementById('telemetry-speed').textContent = formatNumber(sample.speed_mph, 1);
       document.getElementById('telemetry-long').textContent = formatNumber(sample.long_accel_mps2, 2);
       document.getElementById('telemetry-lat').textContent = formatNumber(sample.lat_accel_mps2, 2);
-      document.getElementById('telemetry-distance').textContent = formatNumber(sample.distance_m, 1);
+      // Convert distance from meters to miles (1 meter = 0.000621371 miles)
+      const distance_mi = (sample.distance_m || 0) * 0.000621371;
+      document.getElementById('telemetry-distance').textContent = formatNumber(distance_mi, 2);
       const imu = [sample.imu_accel_x, sample.imu_accel_y, sample.imu_accel_z]
         .map(v => formatNumber(v, 1))
         .join(' / ');

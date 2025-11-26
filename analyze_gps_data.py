@@ -161,6 +161,57 @@ def load_gps_data(file_path: Path = DEFAULT_DATA_FILE) -> Dict[int, Dict]:
     return data
 
 
+def get_track_start_data():
+    """
+    Load the track start coordinates from 'GPS Data/track_start.csv'.
+
+    Returns:
+        List of dicts, each with keys: "file_name", "lat", "lon"
+    """
+    results = []
+    # Path relative to this script
+    csv_path = Path("GPS Data/track_start.csv")
+    if not csv_path.exists():
+        return results
+
+    with csv_path.open("r", encoding="utf-8") as f:
+        header = f.readline()
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 3:
+                continue
+            file_name, lat, lon = parts[0], parts[1], parts[2]
+            try:
+                lat = float(lat)
+                lon = float(lon)
+            except Exception:
+                continue
+            results.append({
+                "file_name": file_name,
+                "lat": lat,
+                "lon": lon
+            })
+    return results
+
+def track_start(file_path):
+    """
+    Get the track start coordinates from the track start data.
+    
+    Args:
+        file_path: The path to the file to get the track start coordinates for.
+        
+    Returns:
+        The track start coordinates as a tuple of (latitude, longitude).
+    """
+    tracks = get_track_start_data()
+    for track in tracks:
+        if track['file_name'] == file_path.name:
+            return [track['lat'], track['lon']]
+    return None
+
 # ============================================================================
 # TIME SERIES EXTRACTION
 # ============================================================================
@@ -466,7 +517,7 @@ def build_telemetry_records(df: pd.DataFrame) -> List[Dict]:
     return records
 
 
-def telemetry_to_geojson(telemetry: List[Dict]) -> Dict:
+def telemetry_to_geojson(telemetry: List[Dict], track_start_coords: Optional[List[float]] = None) -> Dict:
     """
     Convert telemetry records to GeoJSON FeatureCollection.
     
@@ -475,6 +526,8 @@ def telemetry_to_geojson(telemetry: List[Dict]) -> Dict:
     
     Args:
         telemetry: List of telemetry record dictionaries.
+        track_start_coords: Optional [lat, lon] coordinates for track start.
+                          If provided, uses these instead of first telemetry point.
         
     Returns:
         GeoJSON FeatureCollection with:
@@ -504,11 +557,17 @@ def telemetry_to_geojson(telemetry: List[Dict]) -> Dict:
         },
     }
     
+    # Use track start coordinates if provided, otherwise use first telemetry point
+    if track_start_coords and len(track_start_coords) >= 2:
+        start_coords = [track_start_coords[1], track_start_coords[0]]  # [lon, lat]
+    else:
+        start_coords = coordinates[0]
+    
     start_feature = {
         "type": "Feature",
         "geometry": {
             "type": "Point",
-            "coordinates": coordinates[0],
+            "coordinates": start_coords,
         },
         "properties": {"marker": "start_finish"},
     }
@@ -523,7 +582,8 @@ def telemetry_to_geojson(telemetry: List[Dict]) -> Dict:
 # LAP ANALYSIS
 # ============================================================================
 
-def detect_laps(telemetry: List[Dict], tolerance_m: float = 40.0, 
+
+def detect_laps(telemetry: List[Dict], file_path, tolerance_m: float = 25.0, 
                 skip_samples: int = 50) -> List[Dict]:
     """
     Detect lap boundaries by identifying returns to the start/finish line.
@@ -547,6 +607,8 @@ def detect_laps(telemetry: List[Dict], tolerance_m: float = 40.0,
         return []
     
     # Find first valid position as start/finish reference
+    # Try to get track start from CSV file first
+    track_start_coords = track_start(file_path)
     first_sample = next(
         (s for s in telemetry if s["lat"] is not None and s["lon"] is not None),
         None
@@ -554,11 +616,16 @@ def detect_laps(telemetry: List[Dict], tolerance_m: float = 40.0,
     if not first_sample:
         return []
     
-    start_lat, start_lon = first_sample["lat"], first_sample["lon"]
+    # Use track start from CSV if available, otherwise use first telemetry sample
+    if track_start_coords is not None:
+        start_lat, start_lon = track_start_coords[0], track_start_coords[1]
+    else:
+        start_lat, start_lon = first_sample["lat"], first_sample["lon"]
+    
     lap_id = 0
     samples_since_boundary = 0
     lap_ranges = []
-    current_start_idx = 0
+    current_start_idx = 0  # Start from the beginning
     
     # Scan through telemetry and detect lap boundaries
     for idx, sample in enumerate(telemetry):
@@ -817,6 +884,57 @@ def build_lap_features(telemetry: List[Dict], laps: List[Dict]) -> Dict:
                 "segment_colors": segment_colors,
                 "stroke": palette[idx % len(palette)],
                 "stroke_width": 5,
+            },
+        })
+    
+    return {"type": "FeatureCollection", "features": features}
+
+
+def build_partial_lap_features(telemetry: List[Dict], partial_laps: List[Dict]) -> Dict:
+    """
+    Build GeoJSON features for partial laps (first and last incomplete laps).
+    
+    Creates simple LineString features without speed coloring, intended for
+    display as dark gray, non-interactive polylines.
+    
+    Args:
+        telemetry: List of telemetry record dictionaries.
+        partial_laps: List of partial lap record dictionaries.
+        
+    Returns:
+        GeoJSON FeatureCollection with one LineString feature per partial lap.
+    """
+    features = []
+    
+    if not partial_laps:
+        return {"type": "FeatureCollection", "features": features}
+    
+    for lap in partial_laps:
+        start_idx = lap.get("start_sample_idx")
+        end_idx = lap.get("end_sample_idx")
+        
+        if start_idx is None or end_idx is None:
+            continue
+        
+        coords = []
+        
+        for sample in telemetry[start_idx : min(end_idx + 1, len(telemetry))]:
+            lat, lon = sample["lat"], sample["lon"]
+            if lat is None or lon is None:
+                continue
+            
+            coords.append([lon, lat])
+        
+        if len(coords) < 2:
+            continue
+        
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": coords},
+            "properties": {
+                "lap_number": lap["lap_number"],
+                "lap_time_s": lap["lap_time_s"],
+                "is_partial": True,
             },
         })
     
@@ -1198,9 +1316,9 @@ def build_session_payload(data_file: Path = DEFAULT_DATA_FILE) -> Dict:
         - laps: List of lap records
         - lap_features: GeoJSON features for each lap
         - lap_deltas: Time delta traces comparing laps
+        - partial_lap_features: GeoJSON features for partial laps
         - corners: List of detected corners
         - heatmap: Heatmap data for brake/throttle/lateral
-        
     Raises:
         ValueError: If parsed time-series is empty.
     """
@@ -1212,20 +1330,40 @@ def build_session_payload(data_file: Path = DEFAULT_DATA_FILE) -> Dict:
     
     df = compute_derived_metrics(df)
     telemetry = build_telemetry_records(df)
-    track_geojson = telemetry_to_geojson(telemetry)
+    
+    # Get track start coordinates from CSV if available
+    track_start_coords = track_start(data_file)
+    track_geojson = telemetry_to_geojson(telemetry, track_start_coords)
     
     # Detect laps
-    laps = detect_laps(telemetry)
+    laps = detect_laps(telemetry, data_file)
+    
+    # If no laps detected, use fallback
     if not laps:
         fallback = build_fallback_lap(telemetry)
         laps = [fallback] if fallback else []
-    
+        partial_laps = []
+    # If we have at least 2 laps, treat first and last as partial
+    elif len(laps) >= 2:
+        partial_laps = [laps[0], laps[-1]]
+        laps = laps[1:-1]
+        # Decrement the lap number by 1 for the remaining laps
+        for lap in laps:
+            if "lap_number" in lap:
+                lap["lap_number"] -= 1
+    else:
+        # Only 1 lap - treat it as a fallback (no partial laps)
+        partial_laps = []
+        
     # Annotate samples with lap information
     annotate_lap_samples(telemetry, laps)
     
     # Build lap visualizations
     lap_features = build_lap_features(telemetry, laps)
     lap_deltas = build_lap_delta_traces(telemetry, laps)
+    
+    # Build partial lap features (dark gray, non-interactive)
+    partial_lap_features = build_partial_lap_features(telemetry, partial_laps) if partial_laps else {"type": "FeatureCollection", "features": []}
     
     # Detect corners and build heatmaps
     corners = detect_corners(telemetry)
@@ -1237,6 +1375,7 @@ def build_session_payload(data_file: Path = DEFAULT_DATA_FILE) -> Dict:
         "laps": laps,
         "lap_features": lap_features,
         "lap_deltas": lap_deltas,
+        "partial_lap_features": partial_lap_features,
         "corners": corners,
         "heatmap": heatmap,
     }

@@ -23,6 +23,7 @@ html, body {
   bottom: 1.5rem;
   right: 1.5rem;
   width: 320px;
+  max-height: calc(50vh - 3rem);
   background: var(--panel-bg);
   border-radius: 16px;
   padding: 1.25rem;
@@ -30,6 +31,8 @@ html, body {
   box-shadow: 0 20px 45px rgba(0,0,0,0.45);
   z-index: 1200;
   pointer-events: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 #hud h1 {
@@ -111,6 +114,7 @@ html, body {
   top: 1.5rem;
   left: 1.5rem;
   width: 240px;
+  max-height: calc(50vh - 3rem);
   background: var(--panel-bg);
   border-radius: 16px;
   padding: 1.25rem;
@@ -118,6 +122,8 @@ html, body {
   box-shadow: 0 20px 45px rgba(0,0,0,0.45);
   z-index: 1200;
   pointer-events: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 #speed-legend {
@@ -125,6 +131,7 @@ html, body {
   left: 1.5rem;
   bottom: 1.5rem;
   width: 240px;
+  max-height: calc(50vh - 3rem);
   background: var(--panel-bg);
   border-radius: 16px;
   padding: 1rem;
@@ -132,6 +139,8 @@ html, body {
   box-shadow: 0 20px 45px rgba(0,0,0,0.45);
   z-index: 1200;
   pointer-events: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 #speed-legend h2 {
@@ -228,7 +237,10 @@ html, body {
   top: 1.5rem;
   right: 1.5rem;
   width: 320px;
+  max-height: calc(50vh - 3rem);
   z-index: 1300;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 #panel-toggle {
@@ -260,6 +272,9 @@ html, body {
   padding: 1rem;
   backdrop-filter: blur(18px);
   box-shadow: 0 20px 45px rgba(0,0,0,0.45);
+  max-height: calc(50vh - 8rem);
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .panel-view {
