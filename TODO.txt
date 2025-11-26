@@ -1,14 +1,15 @@
 Data
     -> Check compute_derived_metrics function math for accelerometer data
     -> Distance is completely wrong
-    -> Lateral and Longitutinal accelerations are wrong
+    -> Lateral and Longitutinal accelerations are wrong (just edited to use accelerometer so yes should be right now...was using GPS as a placeholder originally)
+    -> the IMU data isnt showing up with the cursor?? cant figure out how to fix??
 General
-    -> Associate each dataset with a specific track that has a start/finish coordinate
+    -> Associate each dataset with a specific track that has a start/finish coordinate (Done already I think?)
     -> Split analyze_gps_data into various files
 Smooth trajectory
-    -> Filter noisy measurements. Could probabaly cheat here and use some smoothing function. Kalman filter would be overkill.
+    -> Filter noisy measurements. Could probabaly cheat here and use some smoothing function. Kalman filter would be overkill. (did a rolling average, but other smoothing options might be better...some further research could be done here)
 Heatmaps
-    -> Speed heatmap scale is wrong should be based on telemetry data (which is accurate)
+    -> Speed heatmap scale is wrong should be based on telemetry data (which is accurate) (done)
 Corners
     -> Adjust tolerance (fixing the accel data should fix this)
 UI

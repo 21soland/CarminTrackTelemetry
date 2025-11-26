@@ -14,26 +14,7 @@
   </div>
   <div id="speed-legend">
     <h2>Speed Legend</h2>
-    <div class="legend-row">
-      <span class="legend-swatch" style="background:#0088ff"></span>
-      <span>&lt; 20 mph</span>
-    </div>
-    <div class="legend-row">
-      <span class="legend-swatch" style="background:#00ff00"></span>
-      <span>20 – 35 mph</span>
-    </div>
-    <div class="legend-row">
-      <span class="legend-swatch" style="background:#ffff00"></span>
-      <span>35 – 50 mph</span>
-    </div>
-    <div class="legend-row">
-      <span class="legend-swatch" style="background:#ff8800"></span>
-      <span>50 – 70 mph</span>
-    </div>
-    <div class="legend-row">
-      <span class="legend-swatch" style="background:#ff0000"></span>
-      <span>&gt; 70 mph</span>
-    </div>
+    <div id="speed-legend-rows"></div>
     <div class="speed-toggle">
       <input type="checkbox" id="speed-coloring-toggle" checked />
       <label for="speed-coloring-toggle">Show Speed Colormap</label>
@@ -337,6 +318,38 @@
           renderLapLanes(lapFeaturesData);
         }
       });
+      
+      buildSpeedLegend();
+    }
+    
+    function buildSpeedLegend() {
+      const container = document.getElementById('speed-legend-rows');
+      if (!container || !telemetry.length) return;
+      
+      let maxSpeed = 0;
+      for (const sample of telemetry) {
+        if (sample.speed_mph != null && sample.speed_mph > maxSpeed) {
+          maxSpeed = sample.speed_mph;
+        }
+      }
+      
+      maxSpeed = Math.ceil(maxSpeed / 10) * 10;
+      if (maxSpeed < 10) maxSpeed = 10;
+      
+      const bands = [
+        { pct: 0, color: '#0088ff', label: `< ${Math.round(maxSpeed * 0.2)} mph` },
+        { pct: 0.2, color: '#00ff00', label: `${Math.round(maxSpeed * 0.2)} – ${Math.round(maxSpeed * 0.4)} mph` },
+        { pct: 0.4, color: '#ffff00', label: `${Math.round(maxSpeed * 0.4)} – ${Math.round(maxSpeed * 0.6)} mph` },
+        { pct: 0.6, color: '#ff8800', label: `${Math.round(maxSpeed * 0.6)} – ${Math.round(maxSpeed * 0.8)} mph` },
+        { pct: 0.8, color: '#ff0000', label: `> ${Math.round(maxSpeed * 0.8)} mph` },
+      ];
+      
+      container.innerHTML = bands.map(b => `
+        <div class="legend-row">
+          <span class="legend-swatch" style="background:${b.color}"></span>
+          <span>${b.label}</span>
+        </div>
+      `).join('');
     }
 
     function lapColor(idx) {

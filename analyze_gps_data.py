@@ -395,7 +395,21 @@ def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return R * c
 
 
-def compute_derived_metrics(df: pd.DataFrame) -> pd.DataFrame:
+def smooth_series(series: pd.Series, window: int = 5) -> pd.Series:
+    """
+    Apply a simple moving average to smooth noisy measurements.
+    
+    Args:
+        series: Pandas Series to smooth.
+        window: Window size for moving average. Default 5.
+        
+    Returns:
+        Smoothed Series with same index.
+    """
+    return series.rolling(window=window, center=True, min_periods=1).mean()
+
+
+def compute_derived_metrics(df: pd.DataFrame, smooth_position: bool = True) -> pd.DataFrame:
     """
     Compute derived metrics from raw GPS/IMU data.
     
@@ -410,6 +424,7 @@ def compute_derived_metrics(df: pd.DataFrame) -> pd.DataFrame:
     
     Args:
         df: DataFrame with raw GPS/IMU data from extract_time_series().
+        smooth_position: Whether to apply smoothing to lat/lon. Default True.
         
     Returns:
         DataFrame with additional computed columns: elapsed_s, x_m, y_m,
@@ -423,6 +438,11 @@ def compute_derived_metrics(df: pd.DataFrame) -> pd.DataFrame:
     
     # Compute elapsed time from first timestamp
     df["elapsed_s"] = (df["timestamp"] - df["timestamp"].iloc[0]).dt.total_seconds()
+    
+    # Smooth lat/lon to reduce GPS noise
+    if smooth_position:
+        df["lat"] = smooth_series(df["lat"], window=5)
+        df["lon"] = smooth_series(df["lon"], window=5)
     
     # Get reference point for local coordinate system
     valid_lat = df["lat"].dropna()
@@ -457,18 +477,28 @@ def compute_derived_metrics(df: pd.DataFrame) -> pd.DataFrame:
     heading = np.unwrap(heading)  # Handle 360° wraparound
     df["heading_deg"] = np.rad2deg(heading)
     
-    # Compute longitudinal acceleration (forward/backward)
-    long_accel = df["speed_mps"].diff() / dt
-    df["long_accel_mps2"] = long_accel.replace([np.inf, -np.inf], np.nan).fillna(0)
-    
-    # Compute lateral acceleration (sideways, from turning)
-    if len(df) > 1:
-        heading_rate = np.gradient(heading, df["elapsed_s"])
-        df["lat_accel_mps2"] = df["speed_mps"] * heading_rate
+    # Use IMU accelerometer data for longitudinal and lateral acceleration
+    # Phone coordinate system (typical mounting):
+    #   Y-axis = forward/backward (longitudinal)
+    #   X-axis = left/right (lateral)
+    # Note: Sign conventions may need adjustment based on phone orientation
+    if "imu_accel_y" in df.columns:
+        df["long_accel_mps2"] = df["imu_accel_y"].fillna(0)
     else:
-        df["lat_accel_mps2"] = 0
+        # Fallback to GPS-derived if no IMU data
+        long_accel = df["speed_mps"].diff() / dt
+        df["long_accel_mps2"] = long_accel.replace([np.inf, -np.inf], np.nan).fillna(0)
     
-    df["lat_accel_mps2"] = df["lat_accel_mps2"].replace([np.inf, -np.inf], np.nan).fillna(0)
+    if "imu_accel_x" in df.columns:
+        df["lat_accel_mps2"] = df["imu_accel_x"].fillna(0)
+    else:
+        # Fallback to GPS-derived if no IMU data
+        if len(df) > 1:
+            heading_rate = np.gradient(heading, df["elapsed_s"])
+            df["lat_accel_mps2"] = df["speed_mps"] * heading_rate
+        else:
+            df["lat_accel_mps2"] = 0
+        df["lat_accel_mps2"] = df["lat_accel_mps2"].replace([np.inf, -np.inf], np.nan).fillna(0)
     
     return df
 
@@ -842,6 +872,14 @@ def build_lap_features(telemetry: List[Dict], laps: List[Dict]) -> Dict:
     if not laps:
         return {"type": "FeatureCollection", "features": features}
     
+    max_speed = 0.0
+    for sample in telemetry:
+        speed = sample.get("speed_mph") or 0.0
+        if speed > max_speed:
+            max_speed = speed
+    
+    max_speed = max(10, np.ceil(max_speed / 10) * 10)
+    
     palette = ["#ff2d55", "#00ffa3", "#ffd60a", "#28a2ff", "#b28dff", "#ff8a5b"]
     
     for idx, lap in enumerate(laps):
@@ -867,7 +905,7 @@ def build_lap_features(telemetry: List[Dict], laps: List[Dict]) -> Dict:
             if prev_point is not None:
                 segments.append([prev_point, point])
                 speed_mph = sample.get("speed_mph") or 0.0
-                segment_colors.append(speed_band_color(speed_mph))
+                segment_colors.append(speed_band_color(speed_mph, max_speed))
             
             prev_point = point
         
@@ -941,30 +979,31 @@ def build_partial_lap_features(telemetry: List[Dict], partial_laps: List[Dict]) 
     return {"type": "FeatureCollection", "features": features}
 
 
-def speed_band_color(speed_mph: float) -> str:
+def speed_band_color(speed_mph: float, max_speed: float = 70.0) -> str:
     """
     Map speed to a color for visualization, interpolating between bands.
 
-    Color bands:
-    - < 20 mph: Blue
-    - 20-35 mph: Green
-    - 35-50 mph: Yellow
-    - 50-70 mph: Orange
-    - >= 70 mph: Red
+    Color bands are dynamically scaled based on max_speed:
+    - 0-20% of max: Blue
+    - 20-40% of max: Green
+    - 40-60% of max: Yellow
+    - 60-80% of max: Orange
+    - 80-100% of max: Red
 
     Args:
         speed_mph: Speed in miles per hour.
+        max_speed: Maximum speed for scaling. Default 70.0.
 
     Returns:
         Hex color code string.
     """
-    # Define speed band breakpoints and their corresponding RGB values
+    # Define speed band breakpoints as percentages of max_speed
     bands = [
-        (0,   (0, 136, 255)),   # Blue (#0088ff)
-        (20,  (0, 255, 0)),     # Green (#00ff00)
-        (35,  (255, 255, 0)),   # Yellow (#ffff00)
-        (50,  (255, 136, 0)),   # Orange (#ff8800)
-        (70,  (255, 0, 0)),     # Red (#ff0000)
+        (0,                    (0, 136, 255)),   # Blue (#0088ff)
+        (max_speed * 0.2,      (0, 255, 0)),     # Green (#00ff00)
+        (max_speed * 0.4,      (255, 255, 0)),   # Yellow (#ffff00)
+        (max_speed * 0.6,      (255, 136, 0)),   # Orange (#ff8800)
+        (max_speed * 0.8,      (255, 0, 0)),     # Red (#ff0000)
     ]
 
     # Clamp speed_mph if out of bounds
