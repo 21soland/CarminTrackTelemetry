@@ -11,7 +11,7 @@ from typing import Dict, Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
-from backend import analyze_gps_data
+import analyze_gps_data
 
 
 # ============================================================================
