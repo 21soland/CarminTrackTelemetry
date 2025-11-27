@@ -438,6 +438,7 @@ def compute_derived_metrics(df: pd.DataFrame, smooth_position: bool = True) -> p
     
     # Compute elapsed time from first timestamp
     df["elapsed_s"] = (df["timestamp"] - df["timestamp"].iloc[0]).dt.total_seconds()
+    dt = df["elapsed_s"].diff().replace({0: np.nan})
     
     # Smooth lat/lon to reduce GPS noise
     if smooth_position:
@@ -459,18 +460,18 @@ def compute_derived_metrics(df: pd.DataFrame, smooth_position: bool = True) -> p
     df["y_m"] = y_m
     
     # Compute segment distances and cumulative distance
+    df["speed_mps"] = df["speed_mps"].fillna(0)  # use real logged speed
+    df["speed_mph"] = df["speed_mps"] * 2.23694
+    
+    df["segment_distance_m"] = df["speed_mps"] * dt.fillna(0)
+    df["distance_along_m"] = df["segment_distance_m"].cumsum()
+    df["distance_along_mi"] = df["distance_along_m"] * 0.000621371  # ← added miles
+
+    # Compute speed from position only as fallback (not primary)
     dx = df["x_m"].diff()
     dy = df["y_m"].diff()
-    dt = df["elapsed_s"].diff().replace({0: np.nan})
-    segment_dist = np.sqrt(dx**2 + dy**2)
-    df["segment_distance_m"] = segment_dist.fillna(0)
-    df["distance_along_m"] = df["segment_distance_m"].cumsum().fillna(0)
-    
-    # Compute speed (fill missing GPS speed with computed speed)
-    speed_course = segment_dist / dt
-    df["speed_mps"] = df["speed_mps"].fillna(speed_course)
-    df["speed_mps"] = df["speed_mps"].ffill().fillna(0)
-    df["speed_mph"] = df["speed_mps"] * 2.23694  # Convert m/s to mph
+    speed_course = np.sqrt(dx**2 + dy**2) / dt
+    df["speed_mps"] = df["speed_mps"].fillna(speed_course)  # fill gaps only
     
     # Compute heading (direction of travel)
     heading = np.arctan2(dx.fillna(0), dy.fillna(0))
