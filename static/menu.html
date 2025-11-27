@@ -2,16 +2,24 @@
 <html>
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CarminTrackTelemetry - Select Dataset</title>
   <link rel="stylesheet" href="/static/menu.css" />
 </head>
 <body>
   <div class="menu-container">
-    <h1>CarminTrackTelemetry</h1>
-    <p class="subtitle">Select a dataset to analyze</p>
+    <div class="menu-header">
+      <h1>CarminTrackTelemetry</h1>
+      <p class="subtitle">Select a dataset to analyze</p>
+      <div class="instructions">
+        <p>Choose a GPS dataset from the list to view detailed telemetry analysis, including lap times, speed visualization, and track data.</p>
+      </div>
+    </div>
     
-    <div id="dataset-list" class="dataset-list">
-      <div class="loading">Loading datasets...</div>
+    <div class="menu-content">
+      <div id="dataset-list" class="dataset-list">
+        <div class="loading">Loading datasets...</div>
+      </div>
     </div>
   </div>
 
