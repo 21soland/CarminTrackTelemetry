@@ -1054,12 +1054,29 @@ def build_lap_delta_traces(telemetry: List[Dict], laps: List[Dict]) -> List[Dict
     reference = min(valid_laps, key=lambda lap: lap["lap_time_s"])
     ref_samples = telemetry[reference["start_sample_idx"] : reference["end_sample_idx"] + 1]
     
-    ref_dist = np.array(
-        [sample.get("lap_distance_m") or 0.0 for sample in ref_samples], dtype=float
-    )
-    ref_time = np.array(
-        [sample.get("lap_elapsed_s") or 0.0 for sample in ref_samples], dtype=float
-    )
+    # Build reference distance-time mapping, ensuring sorted by distance
+    ref_data = []
+    for sample in ref_samples:
+        lap_dist = sample.get("lap_distance_m")
+        lap_time = sample.get("lap_elapsed_s")
+        if lap_dist is not None and lap_time is not None:
+            try:
+                ref_data.append((float(lap_dist), float(lap_time)))
+            except (ValueError, TypeError):
+                continue
+    
+    if len(ref_data) < 2:
+        return []
+    
+    # Sort by distance to ensure monotonicity for interpolation
+    ref_data.sort(key=lambda x: x[0])
+    ref_dist = np.array([d for d, _ in ref_data], dtype=float)
+    ref_time = np.array([t for _, t in ref_data], dtype=float)
+    
+    # Remove duplicate distances (keep first occurrence)
+    unique_mask = np.concatenate(([True], np.diff(ref_dist) > 1e-6))
+    ref_dist = ref_dist[unique_mask]
+    ref_time = ref_time[unique_mask]
     
     if len(ref_dist) < 2:
         return []
@@ -1080,16 +1097,29 @@ def build_lap_delta_traces(telemetry: List[Dict], laps: List[Dict]) -> List[Dict
             if lap_distance is None or lap_elapsed is None:
                 continue
             
-            # Interpolate reference time at this distance
+            try:
+                lap_distance = float(lap_distance)
+                lap_elapsed = float(lap_elapsed)
+            except (ValueError, TypeError):
+                continue
+            
+            # Interpolate reference lap's elapsed time at this distance
+            # This gives us the time the reference lap took to reach this distance
             ref_time_at_distance = np.interp(
-                float(lap_distance),
+                lap_distance,
                 ref_dist,
                 ref_time,
-                left=ref_time[0],
-                right=ref_time[-1],
+                left=ref_time[0] if lap_distance < ref_dist[0] else np.nan,
+                right=ref_time[-1] if lap_distance > ref_dist[-1] else np.nan,
             )
             
-            delta = float(lap_elapsed) - float(ref_time_at_distance)
+            # Skip if interpolation failed (outside reference range)
+            if np.isnan(ref_time_at_distance):
+                continue
+            
+            # Delta = current lap time at this distance - reference lap time at same distance
+            # Positive delta means current lap is slower (took more time)
+            delta = lap_elapsed - ref_time_at_distance
             
             trace.append({
                 "distance_m": round_float(lap_distance, 2),
