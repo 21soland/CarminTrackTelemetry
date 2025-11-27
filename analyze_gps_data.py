@@ -614,8 +614,8 @@ def telemetry_to_geojson(telemetry: List[Dict], track_start_coords: Optional[Lis
 # ============================================================================
 
 
-def detect_laps(telemetry: List[Dict], file_path, tolerance_m: float = 25.0, 
-                skip_samples: int = 50) -> List[Dict]:
+def detect_laps(telemetry: List[Dict], file_path, tolerance_m: float = 5.0, 
+                skip_samples: int = 4) -> List[Dict]:
     """
     Detect lap boundaries by identifying returns to the start/finish line.
     
