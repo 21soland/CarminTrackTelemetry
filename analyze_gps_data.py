@@ -5,6 +5,7 @@ This module processes raw GPS and IMU data from track sessions, extracting
 telemetry, detecting laps, identifying corners, and generating visualizations.
 """
 
+from ast import Or
 import csv
 import io
 import numpy as np
@@ -1142,82 +1143,140 @@ def build_lap_delta_traces(telemetry: List[Dict], laps: List[Dict]) -> List[Dict
 # CORNER DETECTION
 # ============================================================================
 
-def detect_corners(telemetry: List[Dict], lat_accel_threshold: float = 1.6,
-                   min_samples: int = 5) -> List[Dict]:
-    """
-    Detect corners by identifying segments with high lateral acceleration.
+def build_corner(telemetry, start_idx, end_idx, corner_num):
+    # Extract corner segment
+    segment = telemetry[start_idx : end_idx + 1]
+    speeds = [sample.get("speed_mph") or 0.0 for sample in segment]
+    lat_accels = [abs(sample.get("lat_accel_mps2") or 0.0) for sample in segment]
+    lap_number = segment[0].get("lap_index")
     
-    Finds continuous segments where lateral acceleration exceeds the threshold,
-    identifying them as corners. For each corner, computes entry/exit speeds,
-    minimum speed (apex), maximum lateral G-force, and duration.
+    # Find apex (point of minimum speed)
+    apex_idx = int(np.argmin(speeds))
+    apex_sample = segment[apex_idx]
     
-    Args:
-        telemetry: List of telemetry record dictionaries.
-        lat_accel_threshold: Minimum lateral acceleration (m/s²) to consider
-                            a corner. Default 1.6.
-        min_samples: Minimum number of consecutive samples required to
-                    constitute a corner. Default 5.
-        
-    Returns:
-        List of corner dictionaries, each containing corner_id, lap_number,
-        entry_speed_mph, exit_speed_mph, min_speed_mph, max_lat_g, duration_s,
-        geometry (list of [lon, lat] coordinates), and apex (lat, lon).
-    """
+    corner = {
+        "corner_id": corner_num,
+        "lap_number": lap_number,
+        "entry_speed_mph": round_float(speeds[0], 1),
+        "exit_speed_mph": round_float(speeds[-1], 1),
+        "min_speed_mph": round_float(min(speeds), 1),
+        "max_lat_g": round_float(max(lat_accels) / 9.80665, 3),  # Convert m/s² to G
+        "duration_s": round_float(
+            (segment[-1].get("elapsed_s") or 0.0) - (segment[0].get("elapsed_s") or 0.0),
+            3,
+        ),
+        "geometry": [
+            [sample["lon"], sample["lat"]]
+            for sample in segment
+            if sample.get("lat") is not None and sample.get("lon") is not None
+        ],
+        "apex": {
+            "lat": apex_sample.get("lat"),
+            "lon": apex_sample.get("lon"),
+        },
+    }
+    return corner
+
+def find_corner_end(lap_data, threshold_idx, min_curvature):
+    time = threshold_idx
+    last_sign = np.sign(lap_data[time])
+
+    while time < len(lap_data) - 1:  # stay within bounds
+        if abs(lap_data[time]) <= min_curvature:
+            return time
+        if np.sign(lap_data[time]) != last_sign:
+            return time
+        time += 1
+
+    return len(lap_data) - 1  # fall back to the end
+
+
+def find_corner_start(lap_data, threshold_idx, min_curvature):
+    time = threshold_idx
+    last_sign = np.sign(lap_data[time])
+
+    while time > 0:
+        if abs(lap_data[time]) <= min_curvature:
+            return time
+        if np.sign(lap_data[time]) != last_sign:
+            return time
+        time -= 1
+
+    return 0
+
+
+
+def detect_corners(telemetry, laps, threshold_curvature: float = 6e3, min_curvature: float = 1e3):
+    curvature_data_by_lap = get_curvature_data(telemetry, laps)
     corners = []
-    idx = 0
-    
-    while idx < len(telemetry):
-        sample = telemetry[idx]
-        lat_accel = abs(sample.get("lat_accel_mps2") or 0.0)
-        
-        if lat_accel < lat_accel_threshold:
-            idx += 1
-            continue
-        
-        # Found start of corner - find end
-        start_idx = idx
-        while idx < len(telemetry) and abs(telemetry[idx].get("lat_accel_mps2") or 0.0) >= lat_accel_threshold:
-            idx += 1
-        
-        end_idx = min(idx - 1, len(telemetry) - 1)
-        
-        # Check minimum length requirement
-        if end_idx - start_idx + 1 < min_samples:
-            continue
-        
-        # Extract corner segment
-        segment = telemetry[start_idx : end_idx + 1]
-        speeds = [sample.get("speed_mph") or 0.0 for sample in segment]
-        lat_accels = [abs(sample.get("lat_accel_mps2") or 0.0) for sample in segment]
-        lap_number = segment[0].get("lap_index")
-        
-        # Find apex (point of minimum speed)
-        apex_idx = int(np.argmin(speeds))
-        apex_sample = segment[apex_idx]
-        
-        corners.append({
-            "corner_id": len(corners) + 1,
-            "lap_number": lap_number,
-            "entry_speed_mph": round_float(speeds[0], 1),
-            "exit_speed_mph": round_float(speeds[-1], 1),
-            "min_speed_mph": round_float(min(speeds), 1),
-            "max_lat_g": round_float(max(lat_accels) / 9.80665, 3),  # Convert m/s² to G
-            "duration_s": round_float(
-                (segment[-1].get("elapsed_s") or 0.0) - (segment[0].get("elapsed_s") or 0.0),
-                3,
-            ),
-            "geometry": [
-                [sample["lon"], sample["lat"]]
-                for sample in segment
-                if sample.get("lat") is not None and sample.get("lon") is not None
-            ],
-            "apex": {
-                "lat": apex_sample.get("lat"),
-                "lon": apex_sample.get("lon"),
-            },
-        })
-    
+
+    for lap in curvature_data_by_lap:
+        lap_data = lap["curvature_data"]      # array of curvature for this lap
+        index_offset = lap["index_offset"]    # starting telemetry index for this lap
+        time = 0
+
+        while time < len(lap_data):
+            if abs(lap_data[time]) >= threshold_curvature:
+                local_end   = find_corner_end(lap_data, time, min_curvature)
+                local_start = find_corner_start(lap_data, time, min_curvature)
+
+                # Convert local lap indices -> global telemetry indices
+                corner_start_idx = local_start + index_offset
+                corner_end_idx   = local_end   + index_offset
+
+                corners.append(
+                    build_corner(telemetry, corner_start_idx, corner_end_idx, len(corners) + 1)
+                )
+
+                # Skip ahead in LOCAL time
+                time = local_end
+            time += 1
+
     return corners
+
+
+def get_curvature(telemetry, idx):
+    p1 = np.array([telemetry[idx - 1]["lon"], telemetry[idx - 1]["lat"]])
+    p2 = np.array([telemetry[idx]["lon"], telemetry[idx]["lat"]])
+    p3 = np.array([telemetry[idx + 1]["lon"], telemetry[idx + 1]["lat"]])
+    u = p2 - p1
+    v = p3 - p1
+
+    denom = np.linalg.norm(u) * np.linalg.norm(v) * np.linalg.norm(u - v)
+    if denom == 0:
+        return 0.0  # or np.nan, depending on how you want to handle degenerate points
+
+    k = 2 * np.cross(u, v) / denom
+    return k
+
+
+
+def get_curvature_data(telemetry, laps):
+    curvature_data_by_lap = []
+
+    for lap in laps:
+        s = lap["start_sample_idx"]
+        e = lap["end_sample_idx"]
+
+        # We'll store curvature at the same length as the lap segment
+        n = e - s + 1
+        cur_lap_curvature = np.zeros(n)
+
+        # Compute curvature only where we have neighbors inside this lap
+        for idx in range(s + 1, e):  # exclude first and last
+            k = get_curvature(telemetry, idx)
+            cur_lap_curvature[idx - s] = k
+
+        curvature_data_by_lap.append({
+            "lap_number": lap["lap_number"],
+            "curvature_data": cur_lap_curvature,
+            "index_offset": s,
+        })
+        print("Max curvature: ", np.max(cur_lap_curvature))
+        print("Min curvature: ", np.min(cur_lap_curvature))
+
+    return curvature_data_by_lap
+
 
 
 # ============================================================================
@@ -1436,7 +1495,7 @@ def build_session_payload(data_file: Path = DEFAULT_DATA_FILE) -> Dict:
     partial_lap_features = build_partial_lap_features(telemetry, partial_laps) if partial_laps else {"type": "FeatureCollection", "features": []}
     
     # Detect corners and build heatmaps
-    corners = detect_corners(telemetry)
+    corners = detect_corners(telemetry,laps)
     heatmap = build_heatmap_layers(telemetry)
     
     return {
