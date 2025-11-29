@@ -2,9 +2,11 @@ const map = L.map('map', {
   zoomControl: false
 }).setView([37.5, -122.3], 14);
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19,
-  attribution: '&copy; OpenStreetMap contributors'
+L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png', {
+  attribution: '© Stadia Maps © OpenMapTiles © OpenStreetMap',
+  maxZoom: 20,
+  subdomains: 'abcd',
+  opacity: 0.95
 }).addTo(map);
 
 let telemetry = [];

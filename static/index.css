@@ -356,3 +356,24 @@ html, body {
   cursor: pointer;
 }
 
+.back-btn {
+  position: absolute;
+  top: 1.5rem;
+  left: 1.5rem;
+  z-index: 1400;
+  background: var(--panel-bg);
+  backdrop-filter: blur(18px);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 16px;
+  padding: 0.75rem 1.25rem;
+  color: white;
+  font-weight: 600;
+  text-decoration: none;
+  font-size: 0.95rem;
+  box-shadow: 0 8px 25px rgba(0,0,0,0.4);
+  transition: all 0.2s ease;
+}
+.back-btn:hover {
+  background: rgba(255,45,85,0.2);
+  border-color: var(--accent);
+}
