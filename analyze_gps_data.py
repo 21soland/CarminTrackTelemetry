@@ -1466,23 +1466,55 @@ def build_session_payload(data_file: Path = DEFAULT_DATA_FILE) -> Dict:
     
     # Detect laps
     laps = detect_laps(telemetry, data_file)
-    
-    # If no laps detected, use fallback
+
+
+    # Decide whether we trust these detected laps, or whether
+    # we should fall back to a single "session lap".
+    MIN_REAL_LAP_TIME_S = 20.0 
+    MIN_REAL_LAP_DISTANCE_M = 150.0
+
+    # If detect_laps returned nothing at all, just use fallback
     if not laps:
         fallback = build_fallback_lap(telemetry)
         laps = [fallback] if fallback else []
         partial_laps = []
-    # If we have at least 2 laps, treat first and last as partial
-    elif len(laps) >= 2:
-        partial_laps = [laps[0], laps[-1]]
-        laps = laps[1:-1]
-        # Decrement the lap number by 1 for the remaining laps
-        for lap in laps:
-            if "lap_number" in lap:
-                lap["lap_number"] -= 1
+
     else:
-        # Only 1 lap - treat it as a fallback (no partial laps)
-        partial_laps = []
+        # Filter out obviously bogus laps with very short or tiny distance
+        plausible_laps = []
+        for lap in laps:
+            t = lap.get("lap_time_s")
+            d = lap.get("distance_m")
+            if t is None or d is None:
+                continue
+            if t >= MIN_REAL_LAP_TIME_S and d >= MIN_REAL_LAP_DISTANCE_M:
+                plausible_laps.append(lap)
+
+        # If no laps look "real", treat the whole session as one lap
+        if not plausible_laps:
+            fallback = build_fallback_lap(telemetry)
+            laps = [fallback] if fallback else []
+            partial_laps = []
+        else:
+            plausible_laps.sort(key=lambda l: l["start_sample_idx"])
+
+            # Re-number them sequentially
+            for i, lap in enumerate(plausible_laps, start=1):
+                lap["lap_number"] = i
+
+            # If we have 3+ real laps, treat first & last as partial (out / in)
+            if len(plausible_laps) >= 3:
+                partial_laps = [plausible_laps[0], plausible_laps[-1]]
+                laps = plausible_laps[1:-1]
+
+                # Re-number "full" laps starting from 1 again
+                for i, lap in enumerate(laps, start=1):
+                    lap["lap_number"] = i
+            else:
+                # 1–2 plausible laps: treat them all as full; no partials
+                laps = plausible_laps
+                partial_laps = []
+
         
     # Annotate samples with lap information
     annotate_lap_samples(telemetry, laps)
