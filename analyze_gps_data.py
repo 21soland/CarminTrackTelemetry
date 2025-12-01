@@ -5,13 +5,19 @@ This module processes raw GPS and IMU data from track sessions, extracting
 telemetry, detecting laps, identifying corners, and generating visualizations.
 """
 
-from ast import Or
 import csv
 import io
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from typing import Dict, List, Optional
+
+# Optional import for Savitzky-Golay filter
+try:
+    from scipy.signal import savgol_filter
+    HAS_SCIPY = True
+except ImportError:
+    HAS_SCIPY = False
 
 
 # ============================================================================
@@ -396,21 +402,54 @@ def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return R * c
 
 
-def smooth_series(series: pd.Series, window: int = 5) -> pd.Series:
+def smooth_series(series: pd.Series, window: int = 7, method: str = "ma") -> pd.Series:
     """
-    Apply a simple moving average to smooth noisy measurements.
+    Apply smoothing to noisy measurements using various methods.
     
     Args:
         series: Pandas Series to smooth.
-        window: Window size for moving average. Default 5.
+        window: Window size for smoothing filter. Default 7.
+        method: Smoothing method - "ma" (moving average), "gaussian", or "savgol". Default "ma".
         
     Returns:
         Smoothed Series with same index.
+        
+    Raises:
+        ValueError: If method is "savgol" but scipy is not available.
+        ValueError: If method is not one of the supported methods.
     """
-    return series.rolling(window=window, center=True, min_periods=1).mean()
+    if method == "ma":
+        # Simple moving average (backward compatible default)
+        return series.rolling(window=window, center=True, min_periods=1).mean()
+    
+    elif method == "gaussian":
+        # Gaussian-weighted moving average
+        # std parameter controls the width of the Gaussian kernel
+        std = max(window / 3.0, 0.5)  # Ensure std is at least 0.5
+        return series.rolling(window=window, center=True, min_periods=1, win_type='gaussian').mean(std=std)
+    
+    elif method == "savgol":
+        # Savitzky-Golay filter (requires scipy)
+        if not HAS_SCIPY:
+            raise ValueError(
+                "Savitzky-Golay filter requires scipy. Install with: pip install scipy\n"
+                "Alternatively, use method='ma' or method='gaussian'"
+            )
+        # Ensure window is odd for savgol_filter
+        if window % 2 == 0:
+            window = window + 1
+        # Use polynomial order of 2 (quadratic) for smooth curves
+        # For very small windows, use linear
+        poly_order = min(2, window - 1) if window > 2 else 1
+        smoothed = savgol_filter(series.values, window_length=window, polyorder=poly_order, mode='nearest')
+        return pd.Series(smoothed, index=series.index)
+    
+    else:
+        raise ValueError(f"Unknown smoothing method: {method}. Must be one of: 'ma', 'gaussian', 'savgol'")
 
 
-def compute_derived_metrics(df: pd.DataFrame, smooth_position: bool = True) -> pd.DataFrame:
+def compute_derived_metrics(df: pd.DataFrame, smooth_position: bool = True, 
+                            smooth_method: str = "ma", smooth_window: int = 5) -> pd.DataFrame:
     """
     Compute derived metrics from raw GPS/IMU data.
     
@@ -426,6 +465,9 @@ def compute_derived_metrics(df: pd.DataFrame, smooth_position: bool = True) -> p
     Args:
         df: DataFrame with raw GPS/IMU data from extract_time_series().
         smooth_position: Whether to apply smoothing to lat/lon. Default True.
+        smooth_method: Smoothing method - "ma" (moving average), "gaussian", or "savgol". 
+                      Default "ma" for backward compatibility.
+        smooth_window: Window size for smoothing filter. Default 5.
         
     Returns:
         DataFrame with additional computed columns: elapsed_s, x_m, y_m,
@@ -443,8 +485,8 @@ def compute_derived_metrics(df: pd.DataFrame, smooth_position: bool = True) -> p
     
     # Smooth lat/lon to reduce GPS noise
     if smooth_position:
-        df["lat"] = smooth_series(df["lat"], window=5)
-        df["lon"] = smooth_series(df["lon"], window=5)
+        df["lat"] = smooth_series(df["lat"], window=smooth_window, method=smooth_method)
+        df["lon"] = smooth_series(df["lon"], window=smooth_window, method=smooth_method)
     
     # Get reference point for local coordinate system
     valid_lat = df["lat"].dropna()
@@ -615,83 +657,71 @@ def telemetry_to_geojson(telemetry: List[Dict], track_start_coords: Optional[Lis
 # ============================================================================
 
 
-def detect_laps(telemetry: List[Dict], file_path, tolerance_m: float = 5.0, 
+def detect_laps(telemetry: List[Dict], file_path,
+                tolerance_m: float = 5.0,
                 skip_samples: int = 4) -> List[Dict]:
     """
     Detect lap boundaries by identifying returns to the start/finish line.
-    
-    Uses the first valid GNSS fix as the start/finish reference point.
-    Increments lap count when the vehicle returns within tolerance_m of this point,
-    after at least skip_samples points have passed (to avoid noise near start).
-    Also annotates each telemetry sample with its lap number.
-    
-    Args:
-        telemetry: List of telemetry record dictionaries.
-        tolerance_m: Distance threshold in meters for lap detection. Default 40.0.
-        skip_samples: Minimum samples to skip after boundary before detecting
-                     next lap (prevents false positives). Default 50.
-        
-    Returns:
-        List of lap record dictionaries, each containing lap_number, start_time,
-        end_time, lap_time_s, distance_m, sector_times_s, sector_splits_m, etc.
+    Uses track_start coords if available; otherwise uses first valid GNSS fix.
     """
     if not telemetry:
         return []
-    
-    # Find first valid position as start/finish reference
-    # Try to get track start from CSV file first
+
+    # Get track start from CSV, may be None
     track_start_coords = track_start(file_path)
+
+    # First valid GNSS sample
     first_sample = next(
         (s for s in telemetry if s["lat"] is not None and s["lon"] is not None),
         None
     )
     if not first_sample:
         return []
-    
-    # Use track start from CSV if available, otherwise use first telemetry sample
+
+    # Choose start/finish reference point
     if track_start_coords is not None:
         start_lat, start_lon = track_start_coords[0], track_start_coords[1]
     else:
         start_lat, start_lon = first_sample["lat"], first_sample["lon"]
-    
+
     lap_id = 0
     samples_since_boundary = 0
     lap_ranges = []
-    current_start_idx = 0  # Start from the beginning
-    
-    # Scan through telemetry and detect lap boundaries
+    current_start_idx = 0
+
+    # Scan through telemetry
     for idx, sample in enumerate(telemetry):
         sample["lap"] = lap_id
         lat, lon = sample["lat"], sample["lon"]
-        
+
         if lat is None or lon is None:
             samples_since_boundary += 1
             continue
-        
-        # Check distance to start/finish
+
         dist = haversine_m(lat, lon, start_lat, start_lon)
-        
+
         if dist < tolerance_m and samples_since_boundary > skip_samples:
-            # New lap detected
+            # Lap boundary detected
             lap_ranges.append((lap_id, current_start_idx, idx))
             lap_id += 1
             samples_since_boundary = 0
             current_start_idx = idx
-        
+
         samples_since_boundary += 1
-    
-    # Add final lap
+
+    # Add final lap range
     lap_ranges.append((lap_id, current_start_idx, len(telemetry) - 1))
-    
+
     # Build lap records
     laps = []
     for lap_number, start_idx, end_idx in lap_ranges:
-        record = build_lap_record(telemetry, start_idx, end_idx, lap_index=lap_number + 1)
+        record = build_lap_record(
+            telemetry, start_idx, end_idx, lap_index=lap_number + 1
+        )
         if record:
             laps.append(record)
-    
-    return laps
 
+    return laps
 
 def build_fallback_lap(telemetry: List[Dict]) -> Dict:
     """
@@ -739,14 +769,20 @@ def build_lap_record(telemetry: List[Dict], start_idx: int, end_idx: int,
         return {}
     
     lap_distance = lap_samples[-1]["distance_m"] - lap_samples[0]["distance_m"]
-    lap_time = lap_samples[-1]["elapsed_s"] - lap_samples[0]["elapsed_s"]
+    
+    # Calculate lap time from ISO timestamp strings to avoid precision loss
+    # from rounded elapsed_s values
+    start_ts = pd.to_datetime(lap_samples[0]["timestamp"])
+    end_ts = pd.to_datetime(lap_samples[-1]["timestamp"])
+    lap_time = (end_ts - start_ts).total_seconds()
+    
     sector_times = compute_sector_times(lap_samples, sectors)
     
     return {
         "lap_number": lap_index,
         "start_time": lap_samples[0]["timestamp"],
         "end_time": lap_samples[-1]["timestamp"],
-        "lap_time_s": round_float(lap_time),
+        "lap_time_s": round_float(lap_time, digits=5),  # Higher precision for accurate UI rounding
         "distance_m": round_float(lap_distance),
         "sector_times_s": sector_times["times"],
         "sector_splits_m": sector_times["splits"],
@@ -788,7 +824,8 @@ def compute_sector_times(lap_samples: List[Dict], sectors: int) -> Dict:
     sector_times = []
     splits = []
     boundary_idx = 0
-    last_boundary_time = lap_samples[0]["elapsed_s"]
+    # Use timestamp for precise time calculation
+    last_boundary_ts = pd.to_datetime(lap_samples[0]["timestamp"])
     
     # Find when each boundary is crossed
     for i in range(1, len(lap_samples)):
@@ -804,13 +841,16 @@ def compute_sector_times(lap_samples: List[Dict], sectors: int) -> Dict:
         
         # Check if boundary was crossed between prev and curr
         if prev_dist <= boundary <= curr_dist:
-            # Interpolate time at boundary
+            # Interpolate time at boundary using timestamps for precision
             ratio = 0 if curr_dist == prev_dist else (boundary - prev_dist) / (curr_dist - prev_dist)
-            boundary_time = prev_sample["elapsed_s"] + ratio * (curr_sample["elapsed_s"] - prev_sample["elapsed_s"])
+            prev_ts = pd.to_datetime(prev_sample["timestamp"])
+            curr_ts = pd.to_datetime(curr_sample["timestamp"])
+            boundary_ts = prev_ts + ratio * (curr_ts - prev_ts)
             
-            sector_times.append(round_float(boundary_time - last_boundary_time))
+            sector_time = (boundary_ts - last_boundary_ts).total_seconds()
+            sector_times.append(round_float(sector_time, digits=5))  # Higher precision for accurate UI rounding
             splits.append(round_float(boundary - start_distance))
-            last_boundary_time = boundary_time
+            last_boundary_ts = boundary_ts
             boundary_idx += 1
     
     return {"times": sector_times, "splits": splits}
@@ -1143,140 +1183,82 @@ def build_lap_delta_traces(telemetry: List[Dict], laps: List[Dict]) -> List[Dict
 # CORNER DETECTION
 # ============================================================================
 
-def build_corner(telemetry, start_idx, end_idx, corner_num):
-    # Extract corner segment
-    segment = telemetry[start_idx : end_idx + 1]
-    speeds = [sample.get("speed_mph") or 0.0 for sample in segment]
-    lat_accels = [abs(sample.get("lat_accel_mps2") or 0.0) for sample in segment]
-    lap_number = segment[0].get("lap_index")
+def detect_corners(telemetry: List[Dict], lat_accel_threshold: float = 1.6,
+                   min_samples: int = 5) -> List[Dict]:
+    """
+    Detect corners by identifying segments with high lateral acceleration.
     
-    # Find apex (point of minimum speed)
-    apex_idx = int(np.argmin(speeds))
-    apex_sample = segment[apex_idx]
+    Finds continuous segments where lateral acceleration exceeds the threshold,
+    identifying them as corners. For each corner, computes entry/exit speeds,
+    minimum speed (apex), maximum lateral G-force, and duration.
     
-    corner = {
-        "corner_id": corner_num,
-        "lap_number": lap_number,
-        "entry_speed_mph": round_float(speeds[0], 1),
-        "exit_speed_mph": round_float(speeds[-1], 1),
-        "min_speed_mph": round_float(min(speeds), 1),
-        "max_lat_g": round_float(max(lat_accels) / 9.80665, 3),  # Convert m/s² to G
-        "duration_s": round_float(
-            (segment[-1].get("elapsed_s") or 0.0) - (segment[0].get("elapsed_s") or 0.0),
-            3,
-        ),
-        "geometry": [
-            [sample["lon"], sample["lat"]]
-            for sample in segment
-            if sample.get("lat") is not None and sample.get("lon") is not None
-        ],
-        "apex": {
-            "lat": apex_sample.get("lat"),
-            "lon": apex_sample.get("lon"),
-        },
-    }
-    return corner
-
-def find_corner_end(lap_data, threshold_idx, min_curvature):
-    time = threshold_idx
-    last_sign = np.sign(lap_data[time])
-
-    while time < len(lap_data) - 1:  # stay within bounds
-        if abs(lap_data[time]) <= min_curvature:
-            return time
-        if np.sign(lap_data[time]) != last_sign:
-            return time
-        time += 1
-
-    return len(lap_data) - 1  # fall back to the end
-
-
-def find_corner_start(lap_data, threshold_idx, min_curvature):
-    time = threshold_idx
-    last_sign = np.sign(lap_data[time])
-
-    while time > 0:
-        if abs(lap_data[time]) <= min_curvature:
-            return time
-        if np.sign(lap_data[time]) != last_sign:
-            return time
-        time -= 1
-
-    return 0
-
-
-
-def detect_corners(telemetry, laps, threshold_curvature: float = 6e3, min_curvature: float = 1e3):
-    curvature_data_by_lap = get_curvature_data(telemetry, laps)
+    Args:
+        telemetry: List of telemetry record dictionaries.
+        lat_accel_threshold: Minimum lateral acceleration (m/s²) to consider
+                            a corner. Default 1.6.
+        min_samples: Minimum number of consecutive samples required to
+                    constitute a corner. Default 5.
+        
+    Returns:
+        List of corner dictionaries, each containing corner_id, lap_number,
+        entry_speed_mph, exit_speed_mph, min_speed_mph, max_lat_g, duration_s,
+        geometry (list of [lon, lat] coordinates), and apex (lat, lon).
+    """
     corners = []
-
-    for lap in curvature_data_by_lap:
-        lap_data = lap["curvature_data"]      # array of curvature for this lap
-        index_offset = lap["index_offset"]    # starting telemetry index for this lap
-        time = 0
-
-        while time < len(lap_data):
-            if abs(lap_data[time]) >= threshold_curvature:
-                local_end   = find_corner_end(lap_data, time, min_curvature)
-                local_start = find_corner_start(lap_data, time, min_curvature)
-
-                # Convert local lap indices -> global telemetry indices
-                corner_start_idx = local_start + index_offset
-                corner_end_idx   = local_end   + index_offset
-
-                corners.append(
-                    build_corner(telemetry, corner_start_idx, corner_end_idx, len(corners) + 1)
-                )
-
-                # Skip ahead in LOCAL time
-                time = local_end
-            time += 1
-
-    return corners
-
-
-def get_curvature(telemetry, idx):
-    p1 = np.array([telemetry[idx - 1]["lon"], telemetry[idx - 1]["lat"]])
-    p2 = np.array([telemetry[idx]["lon"], telemetry[idx]["lat"]])
-    p3 = np.array([telemetry[idx + 1]["lon"], telemetry[idx + 1]["lat"]])
-    u = p2 - p1
-    v = p3 - p1
-
-    denom = np.linalg.norm(u) * np.linalg.norm(v) * np.linalg.norm(u - v)
-    if denom == 0:
-        return 0.0  # or np.nan, depending on how you want to handle degenerate points
-
-    k = 2 * np.cross(u, v) / denom
-    return k
-
-
-
-def get_curvature_data(telemetry, laps):
-    curvature_data_by_lap = []
-
-    for lap in laps:
-        s = lap["start_sample_idx"]
-        e = lap["end_sample_idx"]
-
-        # We'll store curvature at the same length as the lap segment
-        n = e - s + 1
-        cur_lap_curvature = np.zeros(n)
-
-        # Compute curvature only where we have neighbors inside this lap
-        for idx in range(s + 1, e):  # exclude first and last
-            k = get_curvature(telemetry, idx)
-            cur_lap_curvature[idx - s] = k
-
-        curvature_data_by_lap.append({
-            "lap_number": lap["lap_number"],
-            "curvature_data": cur_lap_curvature,
-            "index_offset": s,
+    idx = 0
+    
+    while idx < len(telemetry):
+        sample = telemetry[idx]
+        lat_accel = abs(sample.get("lat_accel_mps2") or 0.0)
+        
+        if lat_accel < lat_accel_threshold:
+            idx += 1
+            continue
+        
+        # Found start of corner - find end
+        start_idx = idx
+        while idx < len(telemetry) and abs(telemetry[idx].get("lat_accel_mps2") or 0.0) >= lat_accel_threshold:
+            idx += 1
+        
+        end_idx = min(idx - 1, len(telemetry) - 1)
+        
+        # Check minimum length requirement
+        if end_idx - start_idx + 1 < min_samples:
+            continue
+        
+        # Extract corner segment
+        segment = telemetry[start_idx : end_idx + 1]
+        speeds = [sample.get("speed_mph") or 0.0 for sample in segment]
+        lat_accels = [abs(sample.get("lat_accel_mps2") or 0.0) for sample in segment]
+        lap_number = segment[0].get("lap_index")
+        
+        # Find apex (point of minimum speed)
+        apex_idx = int(np.argmin(speeds))
+        apex_sample = segment[apex_idx]
+        
+        corners.append({
+            "corner_id": len(corners) + 1,
+            "lap_number": lap_number,
+            "entry_speed_mph": round_float(speeds[0], 1),
+            "exit_speed_mph": round_float(speeds[-1], 1),
+            "min_speed_mph": round_float(min(speeds), 1),
+            "max_lat_g": round_float(max(lat_accels) / 9.80665, 3),  # Convert m/s² to G
+            "duration_s": round_float(
+                (segment[-1].get("elapsed_s") or 0.0) - (segment[0].get("elapsed_s") or 0.0),
+                3,
+            ),
+            "geometry": [
+                [sample["lon"], sample["lat"]]
+                for sample in segment
+                if sample.get("lat") is not None and sample.get("lon") is not None
+            ],
+            "apex": {
+                "lat": apex_sample.get("lat"),
+                "lon": apex_sample.get("lon"),
+            },
         })
-        print("Max curvature: ", np.max(cur_lap_curvature))
-        print("Min curvature: ", np.min(cur_lap_curvature))
-
-    return curvature_data_by_lap
-
+    
+    return corners
 
 
 # ============================================================================
@@ -1424,112 +1406,67 @@ def export_lap_csv(session: Dict, lap_number: int) -> str:
 def build_session_payload(data_file: Path = DEFAULT_DATA_FILE) -> Dict:
     """
     Build complete session payload with all analysis results.
-    
-    Main entry point that orchestrates the entire analysis pipeline:
-    1. Loads and parses GPS data
-    2. Extracts time series
-    3. Computes derived metrics
-    4. Builds telemetry records
-    5. Detects laps
-    6. Generates GeoJSON features
-    7. Detects corners
-    8. Builds heatmap layers
-    
-    Args:
-        data_file: Path to the GPS data file. Defaults to DEFAULT_DATA_FILE.
-        
-    Returns:
-        Dictionary containing:
-        - track: GeoJSON FeatureCollection of the track
-        - telemetry: List of telemetry records
-        - laps: List of lap records
-        - lap_features: GeoJSON features for each lap
-        - lap_deltas: Time delta traces comparing laps
-        - partial_lap_features: GeoJSON features for partial laps
-        - corners: List of detected corners
-        - heatmap: Heatmap data for brake/throttle/lateral
-    Raises:
-        ValueError: If parsed time-series is empty.
     """
     gps_data = load_gps_data(data_file)
     df = extract_time_series(gps_data)
-    
+
     if df.empty:
         raise ValueError("Parsed time-series is empty. Check data file.")
-    
+
     df = compute_derived_metrics(df)
     telemetry = build_telemetry_records(df)
-    
-    # Get track start coordinates from CSV if available
+
+    # Track outline
     track_start_coords = track_start(data_file)
     track_geojson = telemetry_to_geojson(telemetry, track_start_coords)
-    
-    # Detect laps
-    laps = detect_laps(telemetry, data_file)
 
+    # LAP LOGIC
+    #   Some routes (Jackson, freeway) always treated as 1 lap
+    filename = data_file.name.lower()
+    FORCE_SINGLE_LAP_KEYWORDS = ("jackson", "freeway")
 
-    # Decide whether we trust these detected laps, or whether
-    # we should fall back to a single "session lap".
-    MIN_REAL_LAP_TIME_S = 20.0 
-    MIN_REAL_LAP_DISTANCE_M = 150.0
-
-    # If detect_laps returned nothing at all, just use fallback
-    if not laps:
+    if any(key in filename for key in FORCE_SINGLE_LAP_KEYWORDS):
+        # Force single lap for these files
         fallback = build_fallback_lap(telemetry)
         laps = [fallback] if fallback else []
         partial_laps = []
-
     else:
-        # Filter out obviously bogus laps with very short or tiny distance
-        plausible_laps = []
-        for lap in laps:
-            t = lap.get("lap_time_s")
-            d = lap.get("distance_m")
-            if t is None or d is None:
-                continue
-            if t >= MIN_REAL_LAP_TIME_S and d >= MIN_REAL_LAP_DISTANCE_M:
-                plausible_laps.append(lap)
+        # Normal lap detection
+        laps = detect_laps(telemetry, data_file)
 
-        # If no laps look "real", treat the whole session as one lap
-        if not plausible_laps:
+        # No laps detected → fallback
+        if not laps:
             fallback = build_fallback_lap(telemetry)
             laps = [fallback] if fallback else []
             partial_laps = []
+
+        # Multiple laps → remove partial segments
+        elif len(laps) >= 2:
+            partial_laps = [laps[0], laps[-1]]
+            laps = laps[1:-1]
+            # Renumber laps
+            for lap in laps:
+                if "lap_number" in lap:
+                    lap["lap_number"] -= 1
+
         else:
-            plausible_laps.sort(key=lambda l: l["start_sample_idx"])
+            partial_laps = []
 
-            # Re-number them sequentially
-            for i, lap in enumerate(plausible_laps, start=1):
-                lap["lap_number"] = i
-
-            # If we have 3+ real laps, treat first & last as partial (out / in)
-            if len(plausible_laps) >= 3:
-                partial_laps = [plausible_laps[0], plausible_laps[-1]]
-                laps = plausible_laps[1:-1]
-
-                # Re-number "full" laps starting from 1 again
-                for i, lap in enumerate(laps, start=1):
-                    lap["lap_number"] = i
-            else:
-                # 1–2 plausible laps: treat them all as full; no partials
-                laps = plausible_laps
-                partial_laps = []
-
-        
-    # Annotate samples with lap information
+    # Annotate individual telemetry samples
     annotate_lap_samples(telemetry, laps)
-    
-    # Build lap visualizations
+
+    # Visualizations and metrics
     lap_features = build_lap_features(telemetry, laps)
     lap_deltas = build_lap_delta_traces(telemetry, laps)
-    
-    # Build partial lap features (dark gray, non-interactive)
-    partial_lap_features = build_partial_lap_features(telemetry, partial_laps) if partial_laps else {"type": "FeatureCollection", "features": []}
-    
-    # Detect corners and build heatmaps
-    corners = detect_corners(telemetry,laps)
+
+    partial_lap_features = (
+        build_partial_lap_features(telemetry, partial_laps)
+        if partial_laps else {"type": "FeatureCollection", "features": []}
+    )
+
+    corners = detect_corners(telemetry)
     heatmap = build_heatmap_layers(telemetry)
-    
+
     return {
         "track": track_geojson,
         "telemetry": telemetry,
@@ -1540,6 +1477,7 @@ def build_session_payload(data_file: Path = DEFAULT_DATA_FILE) -> Dict:
         "corners": corners,
         "heatmap": heatmap,
     }
+
 
 
 def get_raw_trajectory() -> Dict:

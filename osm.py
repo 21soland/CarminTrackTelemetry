@@ -6,8 +6,8 @@ Dependencies:
   - matplotlib
 
 Usage:
-  python osm.py --data-file "GPS Data/Cheswick Laps.txt"
-  python osm.py --data-file "GPS Data/Cheswick Laps.txt" --dist 500 --output-dir "osm_validation"
+  python3 osm.py --data-file "GPS Data/Cheswick Laps.txt"
+  python3 osm.py --data-file "GPS Data/Cheswick Laps.txt" --dist 500 --output-dir "osm_validation"
 """
 
 import argparse
@@ -244,18 +244,24 @@ def extract_osm_ground_truth(lat_center: float, lon_center: float,
     return edges_proj, crs_proj
 
 
-def load_gps_trajectory(data_file: Path) -> Tuple[pd.DataFrame, pd.DataFrame, List[Dict], List[Dict]]:
+def load_gps_trajectory(data_file: Path, smooth_method: str = "gaussian", 
+                       smooth_window: int = 7) -> Tuple[pd.DataFrame, pd.DataFrame, List[Dict], List[Dict]]:
     """
     Load GPS trajectory data (raw and smoothed) along with lap information.
     
+    Uses the same lap detection and filtering logic as build_session_payload()
+    in analyze_gps_data.py to ensure consistency.
+    
     Args:
         data_file: Path to GPS data file
+        smooth_method: Smoothing method - "gaussian", "savgol", or "ma". Default "gaussian".
+        smooth_window: Window size for smoothing. Default 7.
         
     Returns:
         (df_raw, df_smooth, telemetry, laps) where:
         - df_raw, df_smooth: DataFrames with lat, lon, timestamp
         - telemetry: List of telemetry records with lap annotations
-        - laps: List of lap records with start/end indices
+        - laps: List of lap records with start/end indices (filtered and validated)
     """
     # Load using existing pipeline
     parsed = agd.load_gps_data(data_file)
@@ -264,12 +270,56 @@ def load_gps_trajectory(data_file: Path) -> Tuple[pd.DataFrame, pd.DataFrame, Li
     if df_raw.empty:
         raise ValueError(f"Extracted time-series is empty for file: {data_file}")
     
-    # Compute smoothed version
-    df_smooth = agd.compute_derived_metrics(df_raw, smooth_position=True)
+    # Compute smoothed version with specified method
+    df_smooth = agd.compute_derived_metrics(df_raw, smooth_position=True, 
+                                            smooth_method=smooth_method, 
+                                            smooth_window=smooth_window)
     
     # Build telemetry records and detect laps
     telemetry = agd.build_telemetry_records(df_smooth)
     laps = agd.detect_laps(telemetry, data_file)
+    
+    # Apply the same filtering logic as build_session_payload() in analyze_gps_data.py
+    MIN_REAL_LAP_TIME_S = 20.0 
+    MIN_REAL_LAP_DISTANCE_M = 150.0
+
+    # If detect_laps returned nothing at all, just use fallback
+    if not laps:
+        fallback = agd.build_fallback_lap(telemetry)
+        laps = [fallback] if fallback else []
+    else:
+        # Filter out obviously bogus laps with very short or tiny distance
+        plausible_laps = []
+        for lap in laps:
+            t = lap.get("lap_time_s")
+            d = lap.get("distance_m")
+            if t is None or d is None:
+                continue
+            if t >= MIN_REAL_LAP_TIME_S and d >= MIN_REAL_LAP_DISTANCE_M:
+                plausible_laps.append(lap)
+
+        # If no laps look "real", treat the whole session as one lap
+        if not plausible_laps:
+            fallback = agd.build_fallback_lap(telemetry)
+            laps = [fallback] if fallback else []
+        else:
+            plausible_laps.sort(key=lambda l: l["start_sample_idx"])
+
+            # Re-number them sequentially
+            for i, lap in enumerate(plausible_laps, start=1):
+                lap["lap_number"] = i
+
+            # If we have 3+ real laps, treat first & last as partial (out / in)
+            if len(plausible_laps) >= 3:
+                # For OSM validation, we'll keep all laps but mark partial ones
+                # The calling code can handle partial laps if needed
+                laps = plausible_laps
+            else:
+                # 1–2 plausible laps: treat them all as full; no partials
+                laps = plausible_laps
+    
+    # Annotate samples with lap information (same as build_session_payload)
+    agd.annotate_lap_samples(telemetry, laps)
     
     # Extract relevant columns
     df_raw = df_raw[["timestamp", "lat", "lon"]].copy()
@@ -599,6 +649,19 @@ def main():
         default="osm_validation",
         help="Output directory for results (default: osm_validation)"
     )
+    parser.add_argument(
+        "--smooth-method",
+        type=str,
+        default="gaussian",
+        choices=["gaussian", "savgol", "ma"],
+        help="Smoothing method: 'gaussian' (default, best for GPS), 'savgol' (best for sharp turns, requires scipy), or 'ma' (simple moving average)"
+    )
+    parser.add_argument(
+        "--smooth-window",
+        type=int,
+        default=5,
+        help="Window size for smoothing filter (default: 5)"
+    )
     
     args = parser.parse_args()
     
@@ -612,7 +675,12 @@ def main():
     else:
         data_file = Path(agd.DEFAULT_DATA_FILE)
     print(f"Loading GPS data from: {data_file}")
-    df_raw, df_smooth, telemetry, laps = load_gps_trajectory(data_file)
+    print(f"Using smoothing method: {args.smooth_method} (window={args.smooth_window})")
+    df_raw, df_smooth, telemetry, laps = load_gps_trajectory(
+        data_file, 
+        smooth_method=args.smooth_method,
+        smooth_window=args.smooth_window
+    )
     print(f"Loaded {len(df_raw)} GPS points")
     print(f"Detected {len(laps)} lap(s)")
     
@@ -686,8 +754,8 @@ def main():
     print_metrics("RAW GPS", metrics_raw)
     print_metrics("SMOOTHED GPS", metrics_smooth)
     
-    # Create visualization
-    plot_path = output_dir / f"{data_file.stem}_enu_overlay.png"
+    # Create visualization (include filter method in filename for comparison)
+    plot_path = output_dir / f"{data_file.stem}_{args.smooth_method}_enu_overlay.png"
     print(f"\nCreating comprehensive ENU overlay plot...")
     plot_enu_overlay(
         df_raw, df_smooth, edges_gdf,
@@ -697,7 +765,7 @@ def main():
         plot_path
     )
     
-    # Save detailed results to CSV
+    # Save detailed results to CSV (include filter method in filename)
     results_df = pd.DataFrame({
         'timestamp': df_raw['timestamp'],
         'lat_raw': df_raw['lat'],
@@ -708,11 +776,11 @@ def main():
         'dist_error_smooth_m': distances_smooth,
     })
     
-    csv_path = output_dir / f"{data_file.stem}_validation_results.csv"
+    csv_path = output_dir / f"{data_file.stem}_{args.smooth_method}_validation_results.csv"
     results_df.to_csv(csv_path, index=False)
     print(f"Saved detailed results to: {csv_path}")
     
-    # Save summary metrics
+    # Save summary metrics (include filter method in filename)
     summary = pd.DataFrame({
         'Metric': ['n_points', 'mean_m', 'rms_m', 'std_m', 'median_m', 
                    'p75_m', 'p90_m', 'p95_m', 'p99_m', 'min_m', 'max_m'],
@@ -724,7 +792,7 @@ def main():
                                                       'p99_m', 'min_m', 'max_m']],
     })
     
-    summary_path = output_dir / f"{data_file.stem}_metrics_summary.csv"
+    summary_path = output_dir / f"{data_file.stem}_{args.smooth_method}_metrics_summary.csv"
     summary.to_csv(summary_path, index=False)
     print(f"Saved metrics summary to: {summary_path}")
     
