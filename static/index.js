@@ -21,6 +21,7 @@ let cornerGroup = L.layerGroup().addTo(map);
 let heatmapLayers = {};
 let speedColoringEnabled = true;
 let lapFeaturesData = null;
+let allCorners = []; // Store all corners to filter by visible lap
 
 // Get dataset from URL parameter
 const urlParams = new URLSearchParams(window.location.search);
@@ -36,9 +37,10 @@ fetch(`/api/session${datasetParam}`)
     renderPartialLaps(session.partial_lap_features);
     renderLapLanes(session.lap_features);
     renderLapControls(session.lap_features);
-    renderLapList(session.laps || []);
-    allLaps = session.laps || [];
-    renderCornerList(session.corners || []);
+        renderLapList(session.laps || []);
+        allLaps = session.laps || [];
+        allCorners = session.corners || [];
+        renderCornerList();
     // Setup delta after visible lap is determined (in renderLapLanes)
     setupLapDelta();
     setupHeatmapControls(session.heatmap || {});
@@ -101,11 +103,35 @@ function configurePanelToggle() {
       panels.forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
       document.getElementById(panelId).classList.add('active');
+      
+      // Clear and hide corner highlight (white dotted line and yellow dot) when switching to panels other than Corners
+      if (panelId !== 'corner-panel') {
+        // First clear all layers from cornerGroup (removes white polyline and yellow apex marker)
+        cornerGroup.clearLayers();
+        // Then remove the entire cornerGroup from map to ensure it's completely hidden
+        try {
+          if (map.hasLayer(cornerGroup)) {
+            map.removeLayer(cornerGroup);
+          }
+        } catch (e) {
+          // If layer is not on map, that's fine - just continue
+        }
+      } else {
+        // Re-add cornerGroup to map when switching to Corners panel
+        if (!map.hasLayer(cornerGroup)) {
+          cornerGroup.addTo(map);
+        }
+      }
     });
   });
   if (buttons.length) {
     buttons[0].classList.add('active');
     document.getElementById(buttons[0].dataset.panel).classList.add('active');
+    // If first panel is not corner-panel, remove cornerGroup initially
+    const firstPanelId = buttons[0].dataset.panel;
+    if (firstPanelId !== 'corner-panel' && map.hasLayer(cornerGroup)) {
+      map.removeLayer(cornerGroup);
+    }
   }
 }
 
@@ -457,6 +483,7 @@ function toggleLapVisibility(lapNumber, button) {
     if (visibleLapNumber !== null) {
       updateDeltaDropdown();
       updateDeltaReference();
+      renderCornerList(); // Update corner list for new visible lap
       if (currentSample) {
         updateDeltaReadout(currentSample);
       }
@@ -486,6 +513,8 @@ function toggleLapVisibility(lapNumber, button) {
     updateDeltaDropdown();
     // Update reference text
     updateDeltaReference();
+    // Update corner list for the newly visible lap
+    renderCornerList();
     // Update readout if we have a current sample
     if (currentSample) {
       updateDeltaReadout(currentSample);
@@ -677,19 +706,30 @@ function interpolateTime(samples, distance) {
   return null;
 }
 
-function renderCornerList(corners) {
+function renderCornerList() {
   const container = document.getElementById('corner-list');
   container.innerHTML = '';
   cornerGroup.clearLayers();
-  if (!corners.length) {
-    container.innerHTML = '<p>No corners detected yet.</p>';
+  
+  // Filter corners to only show those from the visible lap
+  const filteredCorners = visibleLapNumber 
+    ? allCorners.filter(corner => corner.lap_number === visibleLapNumber)
+    : [];
+  
+  if (!filteredCorners.length) {
+    if (!visibleLapNumber) {
+      container.innerHTML = '<p>No lap selected.</p>';
+    } else {
+      container.innerHTML = '<p>No corners detected for this lap.</p>';
+    }
     return;
   }
-  corners.forEach(corner => {
+  
+  filteredCorners.forEach(corner => {
     const entry = document.createElement('div');
     entry.className = 'corner-entry';
     entry.innerHTML = `
-      <strong>Corner ${corner.corner_id} · Lap ${corner.lap_number}</strong>
+      <strong>Corner ${corner.corner_id}</strong>
       <span>${formatNumber(corner.min_speed_mph, 1)} mph min · ${formatNumber(corner.max_lat_g, 2)} g</span>
     `;
     entry.addEventListener('click', () => highlightCorner(corner));
